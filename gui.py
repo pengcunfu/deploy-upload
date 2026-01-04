@@ -15,8 +15,8 @@ from PySide6.QtWidgets import (
     QGroupBox, QLineEdit, QPushButton, QLabel, QTextEdit,
     QProgressBar, QFileDialog, QSpinBox, QMessageBox
 )
-from PySide6.QtCore import Qt, QThread, Signal, Slot
-from PySide6.QtGui import QFont, QIcon, QPalette, QColor
+from PySide6.QtCore import QThread, Signal, Slot
+from PySide6.QtGui import QFont
 from uploader import ProjectUploader
 
 
@@ -85,7 +85,6 @@ class DeployUploadWindow(QMainWindow):
         self.uploader: Optional[ProjectUploader] = None
         self.upload_thread: Optional[UploadThread] = None
         self.init_ui()
-        self.apply_vista_style()
 
     def init_ui(self):
         """初始化UI"""
@@ -114,7 +113,6 @@ class DeployUploadWindow(QMainWindow):
     def create_server_config_group(self) -> QGroupBox:
         """创建服务器配置组"""
         group = QGroupBox("服务器配置")
-        group.setStyleSheet("QGroupBox { font-weight: bold; }")
 
         layout = QVBoxLayout()
         layout.setSpacing(10)
@@ -174,7 +172,6 @@ class DeployUploadWindow(QMainWindow):
     def create_project_config_group(self) -> QGroupBox:
         """创建项目配置组"""
         group = QGroupBox("项目配置")
-        group.setStyleSheet("QGroupBox { font-weight: bold; }")
 
         layout = QVBoxLayout()
         layout.setSpacing(10)
@@ -210,14 +207,15 @@ class DeployUploadWindow(QMainWindow):
     def create_progress_group(self) -> QGroupBox:
         """创建进度显示组"""
         group = QGroupBox("上传进度")
-        group.setStyleSheet("QGroupBox { font-weight: bold; }")
 
         layout = QVBoxLayout()
         layout.setSpacing(10)
 
         # 当前阶段
         self.stage_label = QLabel("就绪")
-        self.stage_label.setStyleSheet("font-weight: bold; color: #333;")
+        font = self.stage_label.font()
+        font.setBold(True)
+        self.stage_label.setFont(font)
         layout.addWidget(self.stage_label)
 
         # 总体进度条
@@ -238,7 +236,6 @@ class DeployUploadWindow(QMainWindow):
         detail_label = QLabel("详细信息:")
         detail_label.setMinimumWidth(80)
         self.progress_detail = QLabel("等待开始...")
-        self.progress_detail.setStyleSheet("color: #666;")
         detail_layout.addWidget(detail_label)
         detail_layout.addWidget(self.progress_detail)
         layout.addLayout(detail_layout)
@@ -249,22 +246,17 @@ class DeployUploadWindow(QMainWindow):
     def create_log_group(self) -> QGroupBox:
         """创建日志输出组"""
         group = QGroupBox("日志输出")
-        group.setStyleSheet("QGroupBox { font-weight: bold; }")
 
         layout = QVBoxLayout()
 
         self.log_output = QTextEdit()
         self.log_output.setReadOnly(True)
         self.log_output.setMinimumHeight(180)
-        self.log_output.setStyleSheet("""
-            QTextEdit {
-                background-color: #1e1e1e;
-                color: #d4d4d4;
-                font-family: 'Consolas', 'Courier New', monospace;
-                font-size: 9pt;
-                border: 1px solid #444;
-            }
-        """)
+        # 设置等宽字体用于日志显示
+        font = QFont("Consolas", 9)
+        if not font.exactMatch():
+            font = QFont("Courier New", 9)
+        self.log_output.setFont(font)
 
         # 清除日志按钮
         btn_layout = QHBoxLayout()
@@ -290,130 +282,18 @@ class DeployUploadWindow(QMainWindow):
         self.upload_btn = QPushButton("开始上传")
         self.upload_btn.setMinimumHeight(35)
         self.upload_btn.setMinimumWidth(150)
-        self.upload_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #0078d7;
-                color: white;
-                font-weight: bold;
-                border: none;
-                border-radius: 3px;
-                padding: 5px 15px;
-            }
-            QPushButton:hover {
-                background-color: #005a9e;
-            }
-            QPushButton:pressed {
-                background-color: #004578;
-            }
-            QPushButton:disabled {
-                background-color: #cccccc;
-                color: #666666;
-            }
-        """)
         self.upload_btn.clicked.connect(self.start_upload)
 
         self.stop_btn = QPushButton("停止")
         self.stop_btn.setMinimumHeight(35)
         self.stop_btn.setMinimumWidth(100)
         self.stop_btn.setEnabled(False)
-        self.stop_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #d13438;
-                color: white;
-                font-weight: bold;
-                border: none;
-                border-radius: 3px;
-                padding: 5px 15px;
-            }
-            QPushButton:hover {
-                background-color: #a82628;
-            }
-            QPushButton:pressed {
-                background-color: #7e1c1e;
-            }
-            QPushButton:disabled {
-                background-color: #cccccc;
-                color: #666666;
-            }
-        """)
         self.stop_btn.clicked.connect(self.stop_upload)
 
         layout.addWidget(self.upload_btn)
         layout.addWidget(self.stop_btn)
         widget.setLayout(layout)
         return widget
-
-    def apply_vista_style(self):
-        """应用Windows Vista风格"""
-        self.setStyleSheet("""
-            QMainWindow {
-                background-color: #f0f0f0;
-            }
-            QGroupBox {
-                border: 1px solid #cccccc;
-                border-radius: 5px;
-                margin-top: 10px;
-                padding-top: 10px;
-                background-color: white;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px;
-            }
-            QLineEdit {
-                border: 1px solid #7a7a7a;
-                border-radius: 3px;
-                padding: 4px;
-                background-color: white;
-                min-height: 20px;
-            }
-            QLineEdit:focus {
-                border: 1px solid #3399ff;
-            }
-            QPushButton {
-                background-color: #f5f5f5;
-                border: 1px solid #d9d9d9;
-                border-radius: 3px;
-                padding: 5px 15px;
-                min-height: 23px;
-            }
-            QPushButton:hover {
-                background-color: #e5f3ff;
-                border: 1px solid #0078d7;
-            }
-            QPushButton:pressed {
-                background-color: #cce8ff;
-            }
-            QPushButton:disabled {
-                background-color: #f0f0f0;
-                color: #a0a0a0;
-                border: 1px solid #e0e0e0;
-            }
-            QSpinBox {
-                border: 1px solid #7a7a7a;
-                border-radius: 3px;
-                padding: 4px;
-                background-color: white;
-                min-height: 20px;
-            }
-            QSpinBox:focus {
-                border: 1px solid #3399ff;
-            }
-            QProgressBar {
-                border: 1px solid #7a7a7a;
-                border-radius: 3px;
-                background-color: #f0f0f0;
-                text-align: center;
-            }
-            QProgressBar::chunk {
-                background-color: #0078d7;
-                border-radius: 2px;
-            }
-            QLabel {
-                color: #333333;
-            }
-        """)
 
     def browse_project(self):
         """浏览项目目录"""
