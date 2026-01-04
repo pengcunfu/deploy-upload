@@ -10,6 +10,7 @@
 - 🔒 **安全连接**: 使用SSH/SFTP协议安全传输文件
 - 🎯 **灵活配置**: 支持自定义忽略模式和文件
 - 📱 **命令行工具**: 提供便捷的命令行接口
+- 🖥️ **图形界面**: 提供Windows Vista风格的图形界面，操作更加直观
 
 ## 安装
 
@@ -112,6 +113,30 @@ deployupload --host 192.168.1.100 --username ubuntu --password your_password
 deployupload --host 192.168.1.100 --username ubuntu --password your_password \
              --project-root /path/to/project --remote-dir /home/ubuntu/projects
 ```
+
+## 图形界面使用
+
+### 启动GUI
+
+安装依赖后，可以通过以下方式启动图形界面：
+
+```bash
+# 方法1：直接运行
+python deployupload_gui.py
+
+# 方法2：使用命令
+deployupload-gui
+```
+
+### GUI功能
+
+- **Windows Vista风格界面**：现代化的用户界面设计
+- **实时进度显示**：显示上传进度和当前阶段
+- **日志输出**：实时查看上传日志
+- **连接测试**：上传前测试服务器连接
+- **多线程上传**：界面不会冻结，操作流畅
+
+详细使用说明请参考 [GUI使用指南](GUI_USAGE.md)
 
 ## API 文档
 

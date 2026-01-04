@@ -7,7 +7,7 @@ DeployUpload 命令行接口
 import argparse
 import sys
 from pathlib import Path
-from .uploader import ProjectUploader
+from uploader import ProjectUploader
 
 
 def progress_callback(stage: str, current: int, total: int):
