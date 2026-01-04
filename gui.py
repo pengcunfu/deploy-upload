@@ -13,7 +13,7 @@ from typing import Optional
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGroupBox, QLineEdit, QPushButton, QLabel, QTextEdit,
-    QProgressBar, QFileDialog, QSpinBox, QMessageBox
+    QProgressBar, QFileDialog, QSpinBox, QMessageBox, QStyleFactory
 )
 from PySide6.QtCore import QThread, Signal, Slot
 from PySide6.QtGui import QFont
@@ -459,6 +459,9 @@ def main():
     app.setApplicationName("DeployUpload")
     app.setApplicationVersion("1.0.0")
     app.setOrganizationName("DeployUpload")
+
+    # 设置Windows Vista风格
+    app.setStyle(QStyleFactory.create("windowsvista"))
 
     # 创建并显示主窗口
     window = DeployUploadWindow()
