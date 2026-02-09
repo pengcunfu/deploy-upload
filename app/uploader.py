@@ -659,3 +659,398 @@ sudo DEBIAN_FRONTEND=noninteractive apt install -y mysql-server"""
 
         except Exception as e:
             raise Exception(f"Nginx安装失败: {str(e)}")
+
+    def install_mongodb(self, progress_callback: Optional[Callable[[str, int, int], None]] = None) -> bool:
+        """
+        在Ubuntu服务器上安装MongoDB
+
+        Args:
+            progress_callback (Callable, optional): 进度回调函数
+
+        Returns:
+            bool: 安装是否成功
+        """
+        try:
+            if progress_callback:
+                progress_callback("更新软件包列表", 0, 100)
+
+            # 更新软件包列表
+            self.execute_remote_command("sudo apt update")
+
+            if progress_callback:
+                progress_callback("安装MongoDB", 0, 100)
+
+            # 导入MongoDB公钥
+            import_cmd = "wget -qO - https://www.mongodb.org/static/pgp/server-6.0.asc | sudo apt-key add -"
+            self.execute_remote_command(import_cmd)
+
+            # 添加MongoDB源
+            source_cmd = "echo 'deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/6.0 multiverse' | sudo tee /etc/apt/sources.list.d/mongodb-org-6.0.list"
+            self.execute_remote_command(source_cmd)
+
+            # 更新并安装
+            self.execute_remote_command("sudo apt update")
+            install_cmd = "sudo DEBIAN_FRONTEND=noninteractive apt install -y mongodb-org"
+            exit_status, output, error = self.execute_remote_command(install_cmd)
+
+            if exit_status != 0:
+                raise Exception(f"MongoDB安装失败: {error}")
+
+            # 启动MongoDB服务
+            if progress_callback:
+                progress_callback("启动MongoDB服务", 0, 100)
+
+            start_cmd = "sudo systemctl start mongod && sudo systemctl enable mongod"
+            self.execute_remote_command(start_cmd)
+
+            if progress_callback:
+                progress_callback("安装MongoDB", 100, 100)
+
+            return True
+
+        except Exception as e:
+            raise Exception(f"MongoDB安装失败: {str(e)}")
+
+    def install_postgresql(self, progress_callback: Optional[Callable[[str, int, int], None]] = None) -> bool:
+        """
+        在Ubuntu服务器上安装PostgreSQL
+
+        Args:
+            progress_callback (Callable, optional): 进度回调函数
+
+        Returns:
+            bool: 安装是否成功
+        """
+        try:
+            if progress_callback:
+                progress_callback("更新软件包列表", 0, 100)
+
+            # 更新软件包列表
+            self.execute_remote_command("sudo apt update")
+
+            if progress_callback:
+                progress_callback("安装PostgreSQL", 0, 100)
+
+            # 安装PostgreSQL
+            install_cmd = "sudo DEBIAN_FRONTEND=noninteractive apt install -y postgresql postgresql-contrib"
+            exit_status, output, error = self.execute_remote_command(install_cmd)
+
+            if exit_status != 0:
+                raise Exception(f"PostgreSQL安装失败: {error}")
+
+            # 启动PostgreSQL服务
+            if progress_callback:
+                progress_callback("启动PostgreSQL服务", 0, 100)
+
+            start_cmd = "sudo systemctl start postgresql && sudo systemctl enable postgresql"
+            self.execute_remote_command(start_cmd)
+
+            if progress_callback:
+                progress_callback("安装PostgreSQL", 100, 100)
+
+            return True
+
+        except Exception as e:
+            raise Exception(f"PostgreSQL安装失败: {str(e)}")
+
+    def install_jdk(self, progress_callback: Optional[Callable[[str, int, int], None]] = None) -> bool:
+        """
+        在Ubuntu服务器上安装JDK
+
+        Args:
+            progress_callback (Callable, optional): 进度回调函数
+
+        Returns:
+            bool: 安装是否成功
+        """
+        try:
+            if progress_callback:
+                progress_callback("更新软件包列表", 0, 100)
+
+            # 更新软件包列表
+            self.execute_remote_command("sudo apt update")
+
+            if progress_callback:
+                progress_callback("安装JDK 11", 0, 100)
+
+            # 安装JDK
+            install_cmd = "sudo DEBIAN_FRONTEND=noninteractive apt install -y openjdk-11-jdk"
+            exit_status, output, error = self.execute_remote_command(install_cmd)
+
+            if exit_status != 0:
+                raise Exception(f"JDK安装失败: {error}")
+
+            # 设置JAVA_HOME
+            env_cmd = "echo 'export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64' | sudo tee -a /etc/environment"
+            self.execute_remote_command(env_cmd)
+
+            if progress_callback:
+                progress_callback("安装JDK", 100, 100)
+
+            return True
+
+        except Exception as e:
+            raise Exception(f"JDK安装失败: {str(e)}")
+
+    def install_python(self, progress_callback: Optional[Callable[[str, int, int], None]] = None) -> bool:
+        """
+        在Ubuntu服务器上安装Python
+
+        Args:
+            progress_callback (Callable, optional): 进度回调函数
+
+        Returns:
+            bool: 安装是否成功
+        """
+        try:
+            if progress_callback:
+                progress_callback("更新软件包列表", 0, 100)
+
+            # 更新软件包列表
+            self.execute_remote_command("sudo apt update")
+
+            if progress_callback:
+                progress_callback("安装Python 3及pip", 0, 100)
+
+            # 安装Python和pip
+            install_cmd = "sudo DEBIAN_FRONTEND=noninteractive apt install -y python3 python3-pip python3-venv"
+            exit_status, output, error = self.execute_remote_command(install_cmd)
+
+            if exit_status != 0:
+                raise Exception(f"Python安装失败: {error}")
+
+            if progress_callback:
+                progress_callback("安装Python", 100, 100)
+
+            return True
+
+        except Exception as e:
+            raise Exception(f"Python安装失败: {str(e)}")
+
+    def install_nodejs(self, progress_callback: Optional[Callable[[str, int, int], None]] = None) -> bool:
+        """
+        在Ubuntu服务器上安装Node.js
+
+        Args:
+            progress_callback (Callable, optional): 进度回调函数
+
+        Returns:
+            bool: 安装是否成功
+        """
+        try:
+            if progress_callback:
+                progress_callback("准备安装Node.js", 0, 100)
+
+            # 安装Node.js 18.x
+            install_cmd = "curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash - && sudo DEBIAN_FRONTEND=noninteractive apt install -y nodejs"
+            exit_status, output, error = self.execute_remote_command(install_cmd)
+
+            if exit_status != 0:
+                raise Exception(f"Node.js安装失败: {error}")
+
+            if progress_callback:
+                progress_callback("安装Node.js", 100, 100)
+
+            return True
+
+        except Exception as e:
+            raise Exception(f"Node.js安装失败: {str(e)}")
+
+    def install_git(self, progress_callback: Optional[Callable[[str, int, int], None]] = None) -> bool:
+        """
+        在Ubuntu服务器上安装Git
+
+        Args:
+            progress_callback (Callable, optional): 进度回调函数
+
+        Returns:
+            bool: 安装是否成功
+        """
+        try:
+            if progress_callback:
+                progress_callback("更新软件包列表", 0, 100)
+
+            # 更新软件包列表
+            self.execute_remote_command("sudo apt update")
+
+            if progress_callback:
+                progress_callback("安装Git", 0, 100)
+
+            # 安装Git
+            install_cmd = "sudo DEBIAN_FRONTEND=noninteractive apt install -y git"
+            exit_status, output, error = self.execute_remote_command(install_cmd)
+
+            if exit_status != 0:
+                raise Exception(f"Git安装失败: {error}")
+
+            if progress_callback:
+                progress_callback("安装Git", 100, 100)
+
+            return True
+
+        except Exception as e:
+            raise Exception(f"Git安装失败: {str(e)}")
+
+    def install_docker(self, progress_callback: Optional[Callable[[str, int, int], None]] = None) -> bool:
+        """
+        在Ubuntu服务器上安装Docker
+
+        Args:
+            progress_callback (Callable, optional): 进度回调函数
+
+        Returns:
+            bool: 安装是否成功
+        """
+        try:
+            if progress_callback:
+                progress_callback("更新软件包列表", 0, 100)
+
+            # 更新软件包列表
+            self.execute_remote_command("sudo apt update")
+
+            if progress_callback:
+                progress_callback("安装Docker依赖", 0, 100)
+
+            # 安装依赖
+            deps_cmd = "sudo DEBIAN_FRONTEND=noninteractive apt install -y ca-certificates curl gnupg lsb-release"
+            self.execute_remote_command(deps_cmd)
+
+            # 添加Docker官方GPG密钥
+            if progress_callback:
+                progress_callback("添加Docker GPG密钥", 0, 100)
+
+            key_cmd = "sudo mkdir -p /etc/apt/keyrings && curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg"
+            self.execute_remote_command(key_cmd)
+
+            # 设置Docker仓库
+            if progress_callback:
+                progress_callback("设置Docker仓库", 0, 100)
+
+            repo_cmd = "echo 'deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable' | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null"
+            self.execute_remote_command(repo_cmd)
+
+            # 更新并安装Docker
+            if progress_callback:
+                progress_callback("安装Docker", 0, 100)
+
+            self.execute_remote_command("sudo apt update")
+            install_cmd = "sudo DEBIAN_FRONTEND=noninteractive apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin"
+            exit_status, output, error = self.execute_remote_command(install_cmd)
+
+            if exit_status != 0:
+                raise Exception(f"Docker安装失败: {error}")
+
+            # 启动Docker服务
+            if progress_callback:
+                progress_callback("启动Docker服务", 0, 100)
+
+            start_cmd = "sudo systemctl start docker && sudo systemctl enable docker"
+            self.execute_remote_command(start_cmd)
+
+            # 添加当前用户到docker组
+            user_cmd = f"sudo usermod -aG docker {self.username}"
+            self.execute_remote_command(user_cmd)
+
+            if progress_callback:
+                progress_callback("安装Docker", 100, 100)
+
+            return True
+
+        except Exception as e:
+            raise Exception(f"Docker安装失败: {str(e)}")
+
+    def install_rabbitmq(self, progress_callback: Optional[Callable[[str, int, int], None]] = None) -> bool:
+        """
+        在Ubuntu服务器上安装RabbitMQ
+
+        Args:
+            progress_callback (Callable, optional): 进度回调函数
+
+        Returns:
+            bool: 安装是否成功
+        """
+        try:
+            if progress_callback:
+                progress_callback("更新软件包列表", 0, 100)
+
+            # 更新软件包列表
+            self.execute_remote_command("sudo apt update")
+
+            if progress_callback:
+                progress_callback("安装Erlang", 0, 100)
+
+            # 安装Erlang（RabbitMQ依赖）
+            erlang_cmd = "sudo DEBIAN_FRONTEND=noninteractive apt install -y erlang-nox"
+            self.execute_remote_command(erlang_cmd)
+
+            if progress_callback:
+                progress_callback("安装RabbitMQ", 0, 100)
+
+            # 添加RabbitMQ源
+            source_cmd = "sudo apt-get install -y erlang && echo 'deb https://dl.bintray.com/rabbitmq/debian ubuntu main' | sudo tee /etc/apt/sources.list.d/bintray.rabbitmq.list"
+            self.execute_remote_command(source_cmd)
+
+            # 安装RabbitMQ
+            install_cmd = "sudo DEBIAN_FRONTEND=noninteractive apt install -y rabbitmq-server"
+            exit_status, output, error = self.execute_remote_command(install_cmd)
+
+            if exit_status != 0:
+                raise Exception(f"RabbitMQ安装失败: {error}")
+
+            # 启动RabbitMQ服务
+            if progress_callback:
+                progress_callback("启动RabbitMQ服务", 0, 100)
+
+            start_cmd = "sudo systemctl start rabbitmq-server && sudo systemctl enable rabbitmq-server"
+            self.execute_remote_command(start_cmd)
+
+            if progress_callback:
+                progress_callback("安装RabbitMQ", 100, 100)
+
+            return True
+
+        except Exception as e:
+            raise Exception(f"RabbitMQ安装失败: {str(e)}")
+
+    def install_php(self, progress_callback: Optional[Callable[[str, int, int], None]] = None) -> bool:
+        """
+        在Ubuntu服务器上安装PHP
+
+        Args:
+            progress_callback (Callable, optional): 进度回调函数
+
+        Returns:
+            bool: 安装是否成功
+        """
+        try:
+            if progress_callback:
+                progress_callback("更新软件包列表", 0, 100)
+
+            # 更新软件包列表
+            self.execute_remote_command("sudo apt update")
+
+            if progress_callback:
+                progress_callback("安装PHP 8及常用扩展", 0, 100)
+
+            # 安装PHP和常用扩展
+            install_cmd = "sudo DEBIAN_FRONTEND=noninteractive apt install -y php php-fpm php-mysql php-redis php-mongodb php-pgsql php-curl php-gd php-mbstring php-xml php-zip"
+            exit_status, output, error = self.execute_remote_command(install_cmd)
+
+            if exit_status != 0:
+                raise Exception(f"PHP安装失败: {error}")
+
+            # 启动PHP-FPM服务
+            if progress_callback:
+                progress_callback("启动PHP-FPM服务", 0, 100)
+
+            start_cmd = "sudo systemctl start php8.1-fpm && sudo systemctl enable php8.1-fpm"
+            self.execute_remote_command(start_cmd)
+
+            if progress_callback:
+                progress_callback("安装PHP", 100, 100)
+
+            return True
+
+        except Exception as e:
+            raise Exception(f"PHP安装失败: {str(e)}")
+

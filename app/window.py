@@ -23,6 +23,7 @@ from .uploader import ProjectUploader
 from .server_config import ServerConfig, ServerConfigManager
 from .dialogs import ServerManagerDialog, MySQLInstallDialog
 from .threads import UploadThread, VueDeployThread, InstallThread
+from .server_types import SoftwareType
 
 
 class DeployUploadWindow(QMainWindow):
@@ -122,6 +123,17 @@ class DeployUploadWindow(QMainWindow):
         port_layout.addWidget(self.port_label)
         port_layout.addStretch()
         info_grid.addLayout(port_layout)
+
+        # 系统类型
+        type_layout = QHBoxLayout()
+        type_label = QLabel("系统类型:")
+        type_label.setMinimumWidth(80)
+        self.type_label = QLabel("-")
+        self.type_label.setStyleSheet("color: #666; padding: 2px 5px;")
+        type_layout.addWidget(type_label)
+        type_layout.addWidget(self.type_label)
+        type_layout.addStretch()
+        info_grid.addLayout(type_layout)
 
         layout.addLayout(info_grid)
 
@@ -283,22 +295,42 @@ class DeployUploadWindow(QMainWindow):
 
         deploy_menu.addSeparator()
 
-        # Ubuntu环境安装菜单
-        ubuntu_menu = menubar.addMenu("Ubuntu环境(&U)")
+        # 软件安装菜单
+        software_menu = menubar.addMenu("软件安装(&I)")
 
-        install_mysql_action = ubuntu_menu.addAction("安装MySQL(&M)")
-        install_mysql_action.triggered.connect(self.install_mysql)
+        # 数据库子菜单
+        database_menu = software_menu.addMenu("数据库(&D)")
+        database_menu.addAction("安装 MySQL(&M)").triggered.connect(self.install_mysql)
+        database_menu.addAction("安装 Redis(&R)").triggered.connect(self.install_redis)
+        database_menu.addAction("安装 MongoDB(&O)").triggered.connect(self.install_mongodb)
+        database_menu.addAction("安装 PostgreSQL(&P)").triggered.connect(self.install_postgresql)
 
-        install_redis_action = ubuntu_menu.addAction("安装Redis(&R)")
-        install_redis_action.triggered.connect(self.install_redis)
+        # Web服务器子菜单
+        web_menu = software_menu.addMenu("Web服务器(&W)")
+        web_menu.addAction("安装 Nginx(&N)").triggered.connect(self.install_nginx)
 
-        install_nginx_action = ubuntu_menu.addAction("安装Nginx(&N)")
-        install_nginx_action.triggered.connect(self.install_nginx)
+        # 开发环境子菜单
+        dev_menu = software_menu.addMenu("开发环境(&E)")
+        dev_menu.addAction("安装 JDK(&J)").triggered.connect(self.install_jdk)
+        dev_menu.addAction("安装 Python(&P)").triggered.connect(self.install_python)
+        dev_menu.addAction("安装 Node.js(&N)").triggered.connect(self.install_nodejs)
+        dev_menu.addAction("安装 Git(&G)").triggered.connect(self.install_git)
 
-        ubuntu_menu.addSeparator()
+        # 容器化子菜单
+        container_menu = software_menu.addMenu("容器化(&C)")
+        container_menu.addAction("安装 Docker(&D)").triggered.connect(self.install_docker)
 
-        install_all_action = ubuntu_menu.addAction("一键安装全部(&A)")
-        install_all_action.triggered.connect(self.install_all_environment)
+        # 消息队列子菜单
+        mq_menu = software_menu.addMenu("消息队列(&Q)")
+        mq_menu.addAction("安装 RabbitMQ(&R)").triggered.connect(self.install_rabbitmq)
+
+        software_menu.addSeparator()
+
+        # 常用组合安装
+        software_menu.addAction("Web服务器环境(&W) - Nginx+PHP+MySQL").triggered.connect(self.install_web_stack)
+        software_menu.addAction("Java开发环境(&J) - JDK+MySQL+Redis").triggered.connect(self.install_java_stack)
+        software_menu.addAction("全栈开发环境(&F) - 完整开发环境").triggered.connect(self.install_full_stack)
+        software_menu.addAction("一键安装全部(&A)").triggered.connect(self.install_all_environment)
 
     def load_servers_config(self):
         """加载服务器配置"""
@@ -381,12 +413,14 @@ class DeployUploadWindow(QMainWindow):
             self.host_label.setText(self.current_server.host)
             self.username_label.setText(self.current_server.username)
             self.port_label.setText(str(self.current_server.port))
+            self.type_label.setText(self.current_server.server_type.value)
             self.switch_server_btn.setText("切换服务器")
         else:
             self.server_name_label.setText("未连接")
             self.host_label.setText("-")
             self.username_label.setText("-")
             self.port_label.setText("-")
+            self.type_label.setText("-")
             self.switch_server_btn.setText("选择服务器")
 
     def switch_server(self):
@@ -614,6 +648,203 @@ class DeployUploadWindow(QMainWindow):
                 self.install_thread.start()
 
                 self.statusBar().showMessage("正在安装全部环境...")
+
+    def install_mongodb(self):
+        """安装MongoDB"""
+        self._install_software_with_password(
+            software_name="MongoDB",
+            software_type="mongodb",
+            password_label="MongoDB管理员密码",
+            default_password="mongo123"
+        )
+
+    def install_postgresql(self):
+        """安装PostgreSQL"""
+        self._install_software_with_password(
+            software_name="PostgreSQL",
+            software_type="postgresql",
+            password_label="PostgreSQL用户密码",
+            default_password="postgres"
+        )
+
+    def install_jdk(self):
+        """安装JDK"""
+        self._install_software_simple("JDK", "jdk")
+
+    def install_python(self):
+        """安装Python"""
+        self._install_software_simple("Python", "python")
+
+    def install_nodejs(self):
+        """安装Node.js"""
+        self._install_software_simple("Node.js", "nodejs")
+
+    def install_git(self):
+        """安装Git"""
+        self._install_software_simple("Git", "git")
+
+    def install_docker(self):
+        """安装Docker"""
+        self._install_software_simple("Docker", "docker")
+
+    def install_rabbitmq(self):
+        """安装RabbitMQ"""
+        self._install_software_with_password(
+            software_name="RabbitMQ",
+            software_type="rabbitmq",
+            password_label="RabbitMQ管理员密码",
+            default_password="guest"
+        )
+
+    def install_web_stack(self):
+        """安装Web服务器环境 (Nginx+PHP+MySQL)"""
+        self._install_bundle(
+            "Web服务器环境",
+            ["MySQL", "Redis", "Nginx", "PHP"],
+            requires_password=True
+        )
+
+    def install_java_stack(self):
+        """安装Java开发环境 (JDK+MySQL+Redis)"""
+        self._install_bundle(
+            "Java开发环境",
+            ["JDK", "MySQL", "Redis"],
+            requires_password=True
+        )
+
+    def install_full_stack(self):
+        """安装全栈开发环境"""
+        self._install_bundle(
+            "全栈开发环境",
+            ["MySQL", "Redis", "Nginx", "JDK", "Node.js", "Python", "Docker", "Git"],
+            requires_password=True
+        )
+
+    def _install_software_with_password(self, software_name, software_type, password_label, default_password):
+        """安装需要密码的软件（辅助方法）"""
+        config = self.get_server_config()
+        if not config:
+            return
+
+        host, username, password, port = config
+
+        # 弹出密码设置对话框
+        dialog = MySQLInstallDialog(self)
+        dialog.setWindowTitle(f"{software_name}配置")
+        # 更新对话框标签
+        for child in dialog.children():
+            if hasattr(child, 'text'):
+                if "MySQL" in child.text():
+                    child.setText(child.text().replace("MySQL", software_name))
+                elif "mysql" in child.text().lower():
+                    child.setText(child.text().replace("mysql", software_type.lower()))
+                elif "root" in child.text().lower():
+                    child.setText(child.text().replace("root", "管理员"))
+
+        dialog.password_input.setText(default_password)
+        dialog.confirm_input.setText(default_password)
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            root_password = dialog.get_password()
+
+            reply = QMessageBox.question(
+                self,
+                "确认安装",
+                f"确定要在服务器 {host} 上安装{software_name}吗？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+
+            if reply == QMessageBox.StandardButton.Yes:
+                self.log_output.clear()
+                self.set_inputs_enabled(False)
+
+                self.uploader = ProjectUploader(host, username, password, port)
+
+                self.install_thread = InstallThread(self.uploader, software_type, root_password=root_password)
+                self.install_thread.log.connect(self.append_log)
+                self.install_thread.progress.connect(self.update_progress)
+                self.install_thread.finished.connect(self.install_finished)
+                self.install_thread.error.connect(self.upload_error)
+                self.install_thread.start()
+
+                self.statusBar().showMessage(f"正在安装{software_name}...")
+
+    def _install_software_simple(self, software_name, software_type):
+        """安装不需要密码的软件（辅助方法）"""
+        config = self.get_server_config()
+        if not config:
+            return
+
+        host, username, password, port = config
+
+        reply = QMessageBox.question(
+            self,
+            "确认安装",
+            f"确定要在服务器 {host} 上安装{software_name}吗？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            self.log_output.clear()
+            self.set_inputs_enabled(False)
+
+            self.uploader = ProjectUploader(host, username, password, port)
+
+            self.install_thread = InstallThread(self.uploader, software_type)
+            self.install_thread.log.connect(self.append_log)
+            self.install_thread.progress.connect(self.update_progress)
+            self.install_thread.finished.connect(self.install_finished)
+            self.install_thread.error.connect(self.upload_error)
+            self.install_thread.start()
+
+            self.statusBar().showMessage(f"正在安装{software_name}...")
+
+    def _install_bundle(self, bundle_name, software_list, requires_password=False):
+        """安装软件组合（辅助方法）"""
+        config = self.get_server_config()
+        if not config:
+            return
+
+        host, username, password, port = config
+
+        software_str = ", ".join(software_list)
+        reply = QMessageBox.question(
+            self,
+            "确认安装",
+            f"确定要在服务器 {host} 上安装{bundle_name}吗？\n\n"
+            f"将安装：{software_str}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            if requires_password:
+                # 需要密码，弹出密码设置对话框
+                dialog = MySQLInstallDialog(self)
+                dialog.setWindowTitle(f"{bundle_name}配置")
+                if dialog.exec() == QDialog.DialogCode.Accepted:
+                    root_password = dialog.get_password()
+                    self._start_bundle_install(bundle_name, software_list, host, username, password, port, root_password)
+            else:
+                self._start_bundle_install(bundle_name, software_list, host, username, password, port)
+
+    def _start_bundle_install(self, bundle_name, software_list, host, username, password, port, root_password=None):
+        """开始安装软件组合"""
+        self.log_output.clear()
+        self.set_inputs_enabled(False)
+
+        self.uploader = ProjectUploader(host, username, password, port)
+
+        # 使用逗号分隔的软件列表
+        software_types = ",".join([s.lower() for s in software_list])
+
+        self.install_thread = InstallThread(self.uploader, software_types, root_password=root_password or "root")
+        self.install_thread.log.connect(self.append_log)
+        self.install_thread.progress.connect(self.update_progress)
+        self.install_thread.finished.connect(self.install_finished)
+        self.install_thread.error.connect(self.upload_error)
+        self.install_thread.start()
+
+        self.statusBar().showMessage(f"正在安装{bundle_name}...")
 
     def vue_deploy_finished(self, success: bool, message: str):
         """Vue部署完成"""

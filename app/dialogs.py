@@ -10,10 +10,11 @@ from typing import Optional, List
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QTableWidget, QTableWidgetItem,
     QHeaderView, QAbstractItemView, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QMessageBox, QSpinBox
+    QLabel, QLineEdit, QPushButton, QMessageBox, QSpinBox, QComboBox
 )
 from PySide6.QtCore import Signal
 from .server_config import ServerConfig
+from .server_types import ServerType, get_supported_software
 
 
 class ServerConfigDialog(QDialog):
@@ -94,6 +95,24 @@ class ServerConfigDialog(QDialog):
         port_layout.addStretch()
         layout.addLayout(port_layout)
 
+        # 服务器类型
+        type_layout = QHBoxLayout()
+        type_label = QLabel("系统类型:")
+        type_label.setMinimumWidth(100)
+        self.type_combo = QComboBox()
+        for server_type in ServerType:
+            self.type_combo.addItem(server_type.value, server_type)
+        if self.server:
+            # 设置当前服务器类型
+            for i in range(self.type_combo.count()):
+                if self.type_combo.itemData(i) == self.server.server_type:
+                    self.type_combo.setCurrentIndex(i)
+                    break
+        type_layout.addWidget(type_label)
+        type_layout.addWidget(self.type_combo)
+        type_layout.addStretch()
+        layout.addLayout(type_layout)
+
         # 按钮
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -125,7 +144,8 @@ class ServerConfigDialog(QDialog):
             host=self.host_input.text().strip(),
             username=self.username_input.text().strip(),
             password=self.password_input.text(),
-            port=self.port_input.value()
+            port=self.port_input.value(),
+            server_type=self.type_combo.currentData()
         )
 
 
@@ -165,13 +185,14 @@ class ServerManagerDialog(QDialog):
 
         # 服务器列表表格
         self.server_table = QTableWidget()
-        self.server_table.setColumnCount(5)
-        self.server_table.setHorizontalHeaderLabels(["服务器名称", "主机地址", "用户名", "端口", "操作"])
+        self.server_table.setColumnCount(6)
+        self.server_table.setHorizontalHeaderLabels(["服务器名称", "主机地址", "用户名", "端口", "系统类型", "操作"])
         self.server_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.server_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.server_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.server_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.server_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self.server_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
         self.server_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.server_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.server_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -253,6 +274,7 @@ class ServerManagerDialog(QDialog):
             self.server_table.setItem(row, 1, QTableWidgetItem(server.host))
             self.server_table.setItem(row, 2, QTableWidgetItem(server.username))
             self.server_table.setItem(row, 3, QTableWidgetItem(str(server.port)))
+            self.server_table.setItem(row, 4, QTableWidgetItem(server.server_type.value))
 
             # 操作按钮
             btn_widget = QWidget()
@@ -270,7 +292,7 @@ class ServerManagerDialog(QDialog):
             delete_btn.clicked.connect(lambda checked, r=row: self.delete_server_at_row(r))
             btn_layout.addWidget(delete_btn)
 
-            self.server_table.setCellWidget(row, 4, btn_widget)
+            self.server_table.setCellWidget(row, 5, btn_widget)
 
     def add_server(self):
         """添加服务器"""
