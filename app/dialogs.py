@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QTableWidget, QTableWidgetItem,
     QHeaderView, QAbstractItemView, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QMessageBox, QSpinBox, QComboBox,
-    QFileDialog, QGroupBox
+    QFileDialog, QGroupBox, QCheckBox, QRadioButton, QButtonGroup
 )
 from PySide6.QtCore import Signal, Qt
 from .server_config import ServerConfig
@@ -530,8 +530,7 @@ class VueDeployDialog(QDialog):
 
         # SSL配置
         ssl_layout = QHBoxLayout()
-        self.ssl_checkbox = QPushButton("启用HTTPS (SSL)")
-        self.ssl_checkbox.setCheckable(True)
+        self.ssl_checkbox = QCheckBox("启用HTTPS (SSL)")
         self.ssl_checkbox.setChecked(False)
         ssl_layout.addWidget(self.ssl_checkbox)
         ssl_layout.addStretch()
@@ -619,13 +618,11 @@ class VueDeployDialog(QDialog):
 
         options_layout.addSpacing(10)
 
-        self.auto_install_checkbox = QPushButton("自动安装Node.js和npm (如果未安装)")
-        self.auto_install_checkbox.setCheckable(True)
+        self.auto_install_checkbox = QCheckBox("自动安装Node.js和npm (如果未安装)")
         self.auto_install_checkbox.setChecked(True)
         options_layout.addWidget(self.auto_install_checkbox)
 
-        self.clean_build_checkbox = QPushButton("清理并重新构建 (rm -rf node_modules && npm install)")
-        self.clean_build_checkbox.setCheckable(True)
+        self.clean_build_checkbox = QCheckBox("清理并重新构建 (rm -rf node_modules && npm install)")
         self.clean_build_checkbox.setChecked(False)
         options_layout.addWidget(self.clean_build_checkbox)
 
@@ -865,7 +862,7 @@ class SpringBootDeployDialog(QDialog):
     def init_ui(self):
         """初始化UI"""
         from pathlib import Path
-        from PySide6.QtWidgets import QFileDialog, QGroupBox, QRadioButton, QButtonGroup
+        from PySide6.QtWidgets import QFileDialog, QGroupBox, QRadioButton, QButtonGroup, QCheckBox
 
         layout = QVBoxLayout()
         layout.setSpacing(15)
@@ -999,23 +996,19 @@ class SpringBootDeployDialog(QDialog):
         options_layout = QVBoxLayout()
         options_layout.setSpacing(8)
 
-        self.skip_tests_checkbox = QPushButton("跳过测试 (-DskipTests)")
-        self.skip_tests_checkbox.setCheckable(True)
+        self.skip_tests_checkbox = QCheckBox("跳过测试 (-DskipTests)")
         self.skip_tests_checkbox.setChecked(True)
         options_layout.addWidget(self.skip_tests_checkbox)
 
-        self.auto_install_checkbox = QPushButton("自动安装Maven/Gradle (如果未安装)")
-        self.auto_install_checkbox.setCheckable(True)
+        self.auto_install_checkbox = QCheckBox("自动安装Maven/Gradle (如果未安装)")
         self.auto_install_checkbox.setChecked(True)
         options_layout.addWidget(self.auto_install_checkbox)
 
-        self.clean_build_checkbox = QPushButton("清理并重新构建 (mvn clean / gradle clean)")
-        self.clean_build_checkbox.setCheckable(True)
+        self.clean_build_checkbox = QCheckBox("清理并重新构建 (mvn clean / gradle clean)")
         self.clean_build_checkbox.setChecked(True)
         options_layout.addWidget(self.clean_build_checkbox)
 
-        self.enable_service_checkbox = QPushButton("启用开机自启")
-        self.enable_service_checkbox.setCheckable(True)
+        self.enable_service_checkbox = QCheckBox("启用开机自启")
         self.enable_service_checkbox.setChecked(True)
         options_layout.addWidget(self.enable_service_checkbox)
 
