@@ -341,6 +341,48 @@ class InstallThread(QThread):
 
                 self.finished.emit(True, "全部环境安装成功！\n\n已安装：\n- MySQL\n- Redis\n- Nginx\n\n所有服务已自动启动")
 
+            # APT镜像源配置
+            elif self.install_type.startswith('apt_mirror_'):
+                parts = self.install_type.split('_')
+                mirror_id = parts[2]
+                version = parts[3] if len(parts) > 3 else "22.04"
+
+                self.log.emit(f"开始配置APT镜像源...")
+                self.uploader.configure_apt_mirror(mirror_id, version, progress_callback)
+                self.log.emit("✓ APT镜像源配置完成")
+                self.finished.emit(True, "APT软件源配置成功！\n\n镜像源已更新，软件包列表已刷新")
+
+            # YUM镜像源配置
+            elif self.install_type.startswith('yum_mirror_'):
+                parts = self.install_type.split('_')
+                mirror_id = parts[2]
+                version = int(parts[3]) if len(parts) > 3 else 7
+
+                self.log.emit(f"开始配置YUM镜像源...")
+                self.uploader.configure_yum_mirror(mirror_id, version, progress_callback)
+                self.log.emit("✓ YUM镜像源配置完成")
+                self.finished.emit(True, "YUM软件源配置成功！\n\n镜像源已更新，缓存已重建")
+
+            # 恢复默认源
+            elif self.install_type == 'restore_mirror':
+                self.log.emit("开始恢复默认软件源...")
+
+                # 先尝试恢复APT源
+                try:
+                    self.log.emit("尝试恢复APT源...")
+                    self.uploader.restore_default_mirror("apt", progress_callback)
+                    self.log.emit("✓ APT源恢复成功")
+                    self.finished.emit(True, "软件源已恢复为默认配置")
+                except:
+                    # 如果APT失败，尝试YUM
+                    try:
+                        self.log.emit("尝试恢复YUM源...")
+                        self.uploader.restore_default_mirror("yum", progress_callback)
+                        self.log.emit("✓ YUM源恢复成功")
+                        self.finished.emit(True, "软件源已恢复为默认配置")
+                    except Exception as e:
+                        raise Exception("恢复失败：未找到备份文件")
+
         except Exception as e:
             error_msg = str(e)
             self.log.emit(f"✗ 安装失败: {error_msg}")

@@ -21,7 +21,7 @@ from PySide6.QtGui import QFont
 
 from .uploader import ProjectUploader
 from .server_config import ServerConfig, ServerConfigManager
-from .dialogs import ServerManagerDialog, MySQLInstallDialog, VueDeployDialog, SpringBootDeployDialog
+from .dialogs import ServerManagerDialog, MySQLInstallDialog, VueDeployDialog, SpringBootDeployDialog, MirrorSourceDialog
 from .threads import UploadThread, VueDeployThread, SpringBootDeployThread, FlaskDeployThread, DjangoDeployThread, ExpressDeployThread, InstallThread
 from .server_types import SoftwareType
 
@@ -284,6 +284,15 @@ class DeployUploadWindow(QMainWindow):
 
         manage_servers_action = server_menu.addAction("服务器配置管理(&M)")
         manage_servers_action.triggered.connect(self.manage_servers)
+
+        server_menu.addSeparator()
+
+        # 软件源配置子菜单
+        mirror_menu = server_menu.addMenu("配置软件源(&M)")
+        mirror_menu.addAction("配置APT源(&A) - Ubuntu/Debian").triggered.connect(self.configure_apt_mirror)
+        mirror_menu.addAction("配置YUM源(&Y) - CentOS/RHEL").triggered.connect(self.configure_yum_mirror)
+        mirror_menu.addSeparator()
+        mirror_menu.addAction("恢复默认源(&R)").triggered.connect(self.restore_default_mirror)
 
         server_menu.addSeparator()
 
@@ -1442,3 +1451,163 @@ class DeployUploadWindow(QMainWindow):
         self.remote_input.setEnabled(enabled)
         self.switch_server_btn.setEnabled(enabled)
         self.test_connection_btn.setEnabled(enabled)
+
+    def configure_apt_mirror(self):
+        """配置APT软件源"""
+        config = self.get_server_config()
+        if not config:
+            return
+
+        host, username, password, port = config
+
+        # 显示软件源配置对话框
+        dialog = MirrorSourceDialog(self, server_type="Ubuntu")
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            mirror_config = dialog.get_config()
+
+            # 确认对话框
+            mirror_names = {
+                "aliyun": "阿里云",
+                "tencent": "腾讯云",
+                "huawei": "华为云",
+                "ustc": "中科大",
+                "tsinghua": "清华大学",
+                "netease": "网易",
+                "sohu": "搜狐",
+            }
+            mirror_name = mirror_names.get(mirror_config["mirror_id"], mirror_config["mirror_id"])
+
+            reply = QMessageBox.question(
+                self,
+                "确认配置",
+                f"确定要配置{mirror_name}APT源吗？\n\n"
+                f"服务器: {host}\n"
+                f"系统版本: Ubuntu {mirror_config['version']}\n\n"
+                "该操作将：\n"
+                "1. 备份原始源配置文件\n"
+                "2. 写入新的镜像源配置\n"
+                "3. 更新软件包列表\n\n"
+                "如果配置失败，会自动恢复原始配置",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+
+            if reply == QMessageBox.StandardButton.Yes:
+                self.log_output.clear()
+                self.set_inputs_enabled(False)
+
+                self.uploader = ProjectUploader(host, username, password, port)
+
+                # 使用InstallThread来执行配置
+                self.install_thread = InstallThread(self.uploader, f"apt_mirror_{mirror_config['mirror_id']}_{mirror_config['version']}")
+                self.install_thread.log.connect(self.append_log)
+                self.install_thread.progress.connect(self.update_progress)
+                self.install_thread.finished.connect(self.mirror_config_finished)
+                self.install_thread.error.connect(self.upload_error)
+                self.install_thread.start()
+
+                self.statusBar().showMessage(f"正在配置{mirror_name}APT源...")
+
+    def configure_yum_mirror(self):
+        """配置YUM软件源"""
+        config = self.get_server_config()
+        if not config:
+            return
+
+        host, username, password, port = config
+
+        # 显示软件源配置对话框
+        dialog = MirrorSourceDialog(self, server_type="CentOS")
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            mirror_config = dialog.get_config()
+
+            # 确认对话框
+            mirror_names = {
+                "aliyun": "阿里云",
+                "tencent": "腾讯云",
+                "huawei": "华为云",
+                "ustc": "中科大",
+                "tsinghua": "清华大学",
+                "netease": "网易",
+                "sohu": "搜狐",
+            }
+            mirror_name = mirror_names.get(mirror_config["mirror_id"], mirror_config["mirror_id"])
+
+            reply = QMessageBox.question(
+                self,
+                "确认配置",
+                f"确定要配置{mirror_name}YUM源吗？\n\n"
+                f"服务器: {host}\n"
+                f"系统版本: CentOS {mirror_config['version']}\n\n"
+                "该操作将：\n"
+                "1. 备份原始源配置文件\n"
+                "2. 写入新的镜像源配置\n"
+                "3. 清理并重建YUM缓存\n\n"
+                "如果配置失败，会自动恢复原始配置",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+
+            if reply == QMessageBox.StandardButton.Yes:
+                self.log_output.clear()
+                self.set_inputs_enabled(False)
+
+                self.uploader = ProjectUploader(host, username, password, port)
+
+                # 使用InstallThread来执行配置
+                self.install_thread = InstallThread(self.uploader, f"yum_mirror_{mirror_config['mirror_id']}_{mirror_config['version']}")
+                self.install_thread.log.connect(self.append_log)
+                self.install_thread.progress.connect(self.update_progress)
+                self.install_thread.finished.connect(self.mirror_config_finished)
+                self.install_thread.error.connect(self.upload_error)
+                self.install_thread.start()
+
+                self.statusBar().showMessage(f"正在配置{mirror_name}YUM源...")
+
+    def restore_default_mirror(self):
+        """恢复默认软件源"""
+        config = self.get_server_config()
+        if not config:
+            return
+
+        host, username, password, port = config
+
+        # 询问恢复哪个包管理器的源
+        reply = QMessageBox.question(
+            self,
+            "恢复默认源",
+            f"确定要恢复服务器 {host} 的默认软件源吗？\n\n"
+            "该操作将：\n"
+            "1. 检查备份文件是否存在\n"
+            "2. 恢复原始源配置\n"
+            "3. 更新软件包列表/重建缓存",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            self.log_output.clear()
+            self.set_inputs_enabled(False)
+
+            self.uploader = ProjectUploader(host, username, password, port)
+
+            # 使用InstallThread来执行恢复
+            self.install_thread = InstallThread(self.uploader, "restore_mirror")
+            self.install_thread.log.connect(self.append_log)
+            self.install_thread.progress.connect(self.update_progress)
+            self.install_thread.finished.connect(self.mirror_config_finished)
+            self.install_thread.error.connect(self.upload_error)
+            self.install_thread.start()
+
+            self.statusBar().showMessage("正在恢复默认软件源...")
+
+    def mirror_config_finished(self, success: bool, message: str):
+        """软件源配置完成"""
+        self.set_inputs_enabled(True)
+        self.statusBar().showMessage("配置完成")
+
+        if success:
+            QMessageBox.information(
+                self,
+                "配置成功",
+                f"软件源配置成功！\n\n{message}"
+            )
+        else:
+            QMessageBox.critical(self, "配置失败", message)

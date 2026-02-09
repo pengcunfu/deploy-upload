@@ -23,7 +23,8 @@ __all__ = [
     'ServerManagerDialog',
     'MySQLInstallDialog',
     'VueDeployDialog',
-    'SpringBootDeployDialog'
+    'SpringBootDeployDialog',
+    'MirrorSourceDialog'
 ]
 
 
@@ -1094,3 +1095,126 @@ class SpringBootDeployDialog(QDialog):
             "clean_build": self.clean_build_checkbox.isChecked(),
             "enable_service": self.enable_service_checkbox.isChecked()
         }
+
+
+class MirrorSourceDialog(QDialog):
+    """软件源配置对话框"""
+
+    def __init__(self, parent=None, server_type: str = "Ubuntu"):
+        super().__init__(parent)
+        self.server_type = server_type
+        self.setWindowTitle("配置软件源")
+        self.setMinimumWidth(600)
+        self.setMinimumHeight(400)
+        self.init_ui()
+
+    def init_ui(self):
+        """初始化UI"""
+        layout = QVBoxLayout()
+        layout.setSpacing(15)
+
+        # 标题说明
+        title_label = QLabel("配置国内镜像源")
+        title_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #333;")
+        layout.addWidget(title_label)
+
+        # 说明标签
+        info_label = QLabel(f"当前服务器系统: {self.server_type}")
+        info_label.setStyleSheet("color: #666; font-size: 12px;")
+        layout.addWidget(info_label)
+
+        # 镜像源选择组
+        mirror_group = QGroupBox("选择镜像源")
+        mirror_layout = QVBoxLayout()
+        mirror_layout.setSpacing(8)
+
+        # 镜像源选项
+        self.mirror_radio_group = QButtonGroup(self)
+
+        mirrors = [
+            ("aliyun", "阿里云", "阿里巴巴提供的镜像源，速度快且稳定"),
+            ("tencent", "腾讯云", "腾讯云提供的镜像源"),
+            ("huawei", "华为云", "华为云提供的镜像源"),
+            ("ustc", "中科大", "中国科学技术大学开源镜像站"),
+            ("tsinghua", "清华大学", "清华大学开源镜像站"),
+            ("netease", "网易", "网易开源镜像站"),
+            ("sohu", "搜狐", "搜狐开源镜像站"),
+        ]
+
+        for mirror_id, mirror_name, mirror_desc in mirrors:
+            radio = QRadioButton(f"{mirror_name} - {mirror_desc}")
+            radio.setProperty("mirror_id", mirror_id)
+            self.mirror_radio_group.addButton(radio)
+            mirror_layout.addWidget(radio)
+
+            # 默认选择阿里云
+            if mirror_id == "aliyun":
+                radio.setChecked(True)
+
+        mirror_group.setLayout(mirror_layout)
+        layout.addWidget(mirror_group)
+
+        # 版本配置组
+        version_group = QGroupBox("系统版本")
+        version_layout = QVBoxLayout()
+
+        # 根据服务器类型显示不同的版本选项
+        if self.server_type in ["Ubuntu", "Debian"]:
+            version_label = QLabel("Ubuntu/Debian版本:")
+            self.version_input = QComboBox()
+            self.version_input.addItem("22.04 (Jammy)", "22.04")
+            self.version_input.addItem("20.04 (Focal)", "20.04")
+            self.version_input.addItem("18.04 (Bionic)", "18.04")
+            self.version_input.setCurrentIndex(0)
+        else:
+            version_label = QLabel("CentOS/RHEL版本:")
+            self.version_input = QComboBox()
+            self.version_input.addItem("CentOS 7", "7")
+            self.version_input.addItem("CentOS 8", "8")
+            self.version_input.addItem("CentOS 9", "9")
+            self.version_input.setCurrentIndex(0)
+
+        version_layout.addWidget(version_label)
+        version_layout.addWidget(self.version_input)
+        version_group.setLayout(version_layout)
+        layout.addWidget(version_group)
+
+        # 说明信息
+        info_text = QLabel(
+            "注意：\n"
+            "1. 配置前会自动备份原始源配置文件\n"
+            "2. 配置完成后会自动更新软件包列表\n"
+            "3. 如果配置失败会自动恢复原始配置\n"
+            "4. 配置后可通过菜单恢复默认源"
+        )
+        info_text.setStyleSheet("color: #e67e22; font-size: 11px; padding: 10px; background: #fff3cd; border-radius: 4px;")
+        info_text.setWordWrap(True)
+        layout.addWidget(info_text)
+
+        # 按钮
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept_dialog)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        layout.addStretch()
+        self.setLayout(layout)
+
+    def accept_dialog(self):
+        """确认对话框"""
+        self.accept()
+
+    def get_config(self) -> dict:
+        """获取配置"""
+        selected_button = self.mirror_radio_group.checkedButton()
+        mirror_id = selected_button.property("mirror_id") if selected_button else "aliyun"
+        version = self.version_input.currentData()
+
+        return {
+            "mirror_id": mirror_id,
+            "version": version,
+            "server_type": self.server_type
+        }
+
