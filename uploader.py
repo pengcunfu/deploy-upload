@@ -386,7 +386,7 @@ class ProjectUploader:
     def get_server_info(self) -> Dict[str, Any]:
         """
         获取服务器信息
-        
+
         Returns:
             Dict[str, Any]: 服务器信息字典
         """
@@ -396,3 +396,266 @@ class ProjectUploader:
             'port': self.port,
             'connection_test': self.test_connection()
         }
+
+    def execute_remote_command(self, command: str, progress_callback: Optional[Callable[[str, int, int], None]] = None) -> tuple[int, str, str]:
+        """
+        在远程服务器执行命令
+
+        Args:
+            command (str): 要执行的命令
+            progress_callback (Callable, optional): 进度回调函数
+
+        Returns:
+            tuple[int, str, str]: (退出状态, 标准输出, 错误输出)
+        """
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh.connect(self.host, self.port, self.username, self.password, timeout=30)
+
+        if progress_callback:
+            progress_callback("执行远程命令", 0, 100)
+
+        stdin, stdout, stderr = ssh.exec_command(command)
+        exit_status = stdout.channel.recv_exit_status()
+        output = stdout.read().decode()
+        error = stderr.read().decode()
+
+        ssh.close()
+
+        if progress_callback:
+            progress_callback("执行远程命令", 100, 100)
+
+        return exit_status, output, error
+
+    def deploy_vue_project(self, project_root: str, remote_dir: Optional[str] = None,
+                          progress_callback: Optional[Callable[[str, int, int], None]] = None) -> str:
+        """
+        部署Vue项目到远程服务器
+        包括：上传项目、安装依赖、构建、配置Nginx
+
+        Args:
+            project_root (str): Vue项目根目录
+            remote_dir (str, optional): 远程部署目录
+            progress_callback (Callable, optional): 进度回调函数
+
+        Returns:
+            str: 部署完成后的项目路径
+        """
+        project_root = Path(project_root).resolve()
+
+        if remote_dir is None:
+            remote_dir = f"/home/{self.username}/vue-apps"
+
+        try:
+            # 1. 上传项目
+            if progress_callback:
+                progress_callback("上传Vue项目", 0, 100)
+
+            remote_project_path = self.upload_and_extract(
+                str(project_root),
+                remote_dir,
+                progress_callback=progress_callback
+            )
+
+            # 2. 安装Node.js依赖并构建
+            if progress_callback:
+                progress_callback("安装Node.js依赖", 0, 100)
+
+            install_cmd = f"cd {remote_project_path} && npm install"
+            exit_status, output, error = self.execute_remote_command(install_cmd)
+
+            if exit_status != 0:
+                raise Exception(f"安装依赖失败: {error}")
+
+            if progress_callback:
+                progress_callback("构建Vue项目", 0, 100)
+
+            build_cmd = f"cd {remote_project_path} && npm run build"
+            exit_status, output, error = self.execute_remote_command(build_cmd)
+
+            if exit_status != 0:
+                raise Exception(f"构建失败: {error}")
+
+            # 3. 配置Nginx
+            if progress_callback:
+                progress_callback("配置Nginx", 0, 100)
+
+            project_name = project_root.name
+            nginx_config = f"""
+server {{
+    listen 80;
+    server_name _;
+
+    root {remote_project_path}/dist;
+    index index.html;
+
+    location / {{
+        try_files $uri $uri/ /index.html;
+    }}
+
+    location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {{
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }}
+}}
+"""
+            nginx_conf_path = f"/etc/nginx/sites-available/{project_name}"
+            nginx_enabled_path = f"/etc/nginx/sites-enabled/{project_name}"
+
+            # 写入Nginx配置
+            write_config_cmd = f"echo '{nginx_config}' | sudo tee {nginx_conf_path}"
+            self.execute_remote_command(write_config_cmd)
+
+            # 启用站点
+            enable_site_cmd = f"sudo ln -sf {nginx_conf_path} {nginx_enabled_path}"
+            self.execute_remote_command(enable_site_cmd)
+
+            # 测试Nginx配置
+            test_nginx_cmd = "sudo nginx -t"
+            exit_status, output, error = self.execute_remote_command(test_nginx_cmd)
+
+            if exit_status != 0:
+                raise Exception(f"Nginx配置测试失败: {error}")
+
+            # 重启Nginx
+            reload_nginx_cmd = "sudo systemctl reload nginx"
+            self.execute_remote_command(reload_nginx_cmd)
+
+            if progress_callback:
+                progress_callback("配置Nginx", 100, 100)
+
+            return remote_project_path
+
+        except Exception as e:
+            raise Exception(f"Vue项目部署失败: {str(e)}")
+
+    def install_mysql(self, root_password: str = 'root',
+                     progress_callback: Optional[Callable[[str, int, int], None]] = None) -> bool:
+        """
+        在Ubuntu服务器上安装MySQL
+
+        Args:
+            root_password (str): MySQL root密码
+            progress_callback (Callable, optional): 进度回调函数
+
+        Returns:
+            bool: 安装是否成功
+        """
+        try:
+            if progress_callback:
+                progress_callback("更新软件包列表", 0, 100)
+
+            # 更新软件包列表
+            self.execute_remote_command("sudo apt update")
+
+            if progress_callback:
+                progress_callback("安装MySQL", 0, 100)
+
+            # 设置MySQL root密码为环境变量，然后安装
+            install_cmd = f"""echo "mysql-server mysql-server/root_password password {root_password}" | sudo debconf-set-selections && \
+echo "mysql-server mysql-server/root_password_again password {root_password}" | sudo debconf-set-selections && \
+sudo DEBIAN_FRONTEND=noninteractive apt install -y mysql-server"""
+
+            exit_status, output, error = self.execute_remote_command(install_cmd)
+
+            if exit_status != 0:
+                raise Exception(f"MySQL安装失败: {error}")
+
+            # 启动MySQL服务
+            if progress_callback:
+                progress_callback("启动MySQL服务", 0, 100)
+
+            start_cmd = "sudo systemctl start mysql && sudo systemctl enable mysql"
+            self.execute_remote_command(start_cmd)
+
+            if progress_callback:
+                progress_callback("安装MySQL", 100, 100)
+
+            return True
+
+        except Exception as e:
+            raise Exception(f"MySQL安装失败: {str(e)}")
+
+    def install_redis(self, progress_callback: Optional[Callable[[str, int, int], None]] = None) -> bool:
+        """
+        在Ubuntu服务器上安装Redis
+
+        Args:
+            progress_callback (Callable, optional): 进度回调函数
+
+        Returns:
+            bool: 安装是否成功
+        """
+        try:
+            if progress_callback:
+                progress_callback("更新软件包列表", 0, 100)
+
+            # 更新软件包列表
+            self.execute_remote_command("sudo apt update")
+
+            if progress_callback:
+                progress_callback("安装Redis", 0, 100)
+
+            # 安装Redis
+            install_cmd = "sudo DEBIAN_FRONTEND=noninteractive apt install -y redis-server"
+            exit_status, output, error = self.execute_remote_command(install_cmd)
+
+            if exit_status != 0:
+                raise Exception(f"Redis安装失败: {error}")
+
+            # 启动Redis服务
+            if progress_callback:
+                progress_callback("启动Redis服务", 0, 100)
+
+            start_cmd = "sudo systemctl start redis && sudo systemctl enable redis"
+            self.execute_remote_command(start_cmd)
+
+            if progress_callback:
+                progress_callback("安装Redis", 100, 100)
+
+            return True
+
+        except Exception as e:
+            raise Exception(f"Redis安装失败: {str(e)}")
+
+    def install_nginx(self, progress_callback: Optional[Callable[[str, int, int], None]] = None) -> bool:
+        """
+        在Ubuntu服务器上安装Nginx
+
+        Args:
+            progress_callback (Callable, optional): 进度回调函数
+
+        Returns:
+            bool: 安装是否成功
+        """
+        try:
+            if progress_callback:
+                progress_callback("更新软件包列表", 0, 100)
+
+            # 更新软件包列表
+            self.execute_remote_command("sudo apt update")
+
+            if progress_callback:
+                progress_callback("安装Nginx", 0, 100)
+
+            # 安装Nginx
+            install_cmd = "sudo DEBIAN_FRONTEND=noninteractive apt install -y nginx"
+            exit_status, output, error = self.execute_remote_command(install_cmd)
+
+            if exit_status != 0:
+                raise Exception(f"Nginx安装失败: {error}")
+
+            # 启动Nginx服务
+            if progress_callback:
+                progress_callback("启动Nginx服务", 0, 100)
+
+            start_cmd = "sudo systemctl start nginx && sudo systemctl enable nginx"
+            self.execute_remote_command(start_cmd)
+
+            if progress_callback:
+                progress_callback("安装Nginx", 100, 100)
+
+            return True
+
+        except Exception as e:
+            raise Exception(f"Nginx安装失败: {str(e)}")

@@ -13,7 +13,8 @@ from typing import Optional
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGroupBox, QLineEdit, QPushButton, QLabel, QTextEdit,
-    QProgressBar, QFileDialog, QSpinBox, QMessageBox, QStyleFactory
+    QProgressBar, QFileDialog, QSpinBox, QMessageBox, QStyleFactory,
+    QMenuBar, QMenu, QDialog, QDialogButtonBox
 )
 from PySide6.QtCore import QThread, Signal, Slot
 from PySide6.QtGui import QFont
@@ -90,6 +91,9 @@ class DeployUploadWindow(QMainWindow):
         """初始化UI"""
         self.setWindowTitle("DeployUpload - 项目部署工具")
         self.setMinimumSize(700, 650)
+
+        # 创建菜单栏
+        self.create_menu_bar()
 
         # 创建中央部件
         central_widget = QWidget()
@@ -295,6 +299,252 @@ class DeployUploadWindow(QMainWindow):
         widget.setLayout(layout)
         return widget
 
+    def create_menu_bar(self):
+        """创建菜单栏"""
+        menubar = self.menuBar()
+
+        # 部署菜单
+        deploy_menu = menubar.addMenu("部署(&D)")
+
+        vue_deploy_action = deploy_menu.addAction("Vue项目一键部署(&V)")
+        vue_deploy_action.triggered.connect(self.deploy_vue_project)
+
+        deploy_menu.addSeparator()
+
+        # Ubuntu环境安装菜单
+        ubuntu_menu = menubar.addMenu("Ubuntu环境(&U)")
+
+        install_mysql_action = ubuntu_menu.addAction("安装MySQL(&M)")
+        install_mysql_action.triggered.connect(self.install_mysql)
+
+        install_redis_action = ubuntu_menu.addAction("安装Redis(&R)")
+        install_redis_action.triggered.connect(self.install_redis)
+
+        install_nginx_action = ubuntu_menu.addAction("安装Nginx(&N)")
+        install_nginx_action.triggered.connect(self.install_nginx)
+
+        ubuntu_menu.addSeparator()
+
+        install_all_action = ubuntu_menu.addAction("一键安装全部(&A)")
+        install_all_action.triggered.connect(self.install_all_environment)
+
+    def get_server_config(self) -> tuple:
+        """获取服务器配置"""
+        host = self.host_input.text().strip()
+        username = self.username_input.text().strip()
+        password = self.password_input.text()
+        port = self.port_input.value()
+
+        if not all([host, username, password]):
+            QMessageBox.warning(self, "提示", "请先配置服务器信息")
+            return None
+
+        return host, username, password, port
+
+    def deploy_vue_project(self):
+        """Vue项目一键部署"""
+        config = self.get_server_config()
+        if not config:
+            return
+
+        host, username, password, port = config
+        project_root = self.project_input.text().strip()
+
+        if not project_root or not Path(project_root).exists():
+            QMessageBox.warning(self, "提示", "请选择有效的Vue项目目录")
+            return
+
+        # 确认对话框
+        reply = QMessageBox.question(
+            self,
+            "确认部署",
+            f"确定要部署Vue项目到服务器 {host} 吗？\n\n"
+            f"项目目录: {project_root}\n\n"
+            "该操作将：\n"
+            "1. 上传项目文件\n"
+            "2. 安装npm依赖\n"
+            "3. 执行npm run build\n"
+            "4. 配置Nginx",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            # 清空日志
+            self.log_output.clear()
+
+            # 禁用按钮
+            self.set_inputs_enabled(False)
+
+            # 创建上传器
+            self.uploader = ProjectUploader(host, username, password, port)
+
+            # 在后台线程执行
+            self.deploy_thread = VueDeployThread(self.uploader, project_root)
+            self.deploy_thread.log.connect(self.append_log)
+            self.deploy_thread.progress.connect(self.update_progress)
+            self.deploy_thread.finished.connect(self.vue_deploy_finished)
+            self.deploy_thread.error.connect(self.upload_error)
+            self.deploy_thread.start()
+
+            self.statusBar().showMessage("正在部署Vue项目...")
+
+    def install_mysql(self):
+        """安装MySQL"""
+        config = self.get_server_config()
+        if not config:
+            return
+
+        host, username, password, port = config
+
+        # 弹出密码设置对话框
+        dialog = MySQLInstallDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            root_password = dialog.get_password()
+
+            # 确认对话框
+            reply = QMessageBox.question(
+                self,
+                "确认安装",
+                f"确定要在服务器 {host} 上安装MySQL吗？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+
+            if reply == QMessageBox.StandardButton.Yes:
+                self.log_output.clear()
+                self.set_inputs_enabled(False)
+
+                self.uploader = ProjectUploader(host, username, password, port)
+
+                self.install_thread = InstallThread(self.uploader, 'mysql', root_password=root_password)
+                self.install_thread.log.connect(self.append_log)
+                self.install_thread.progress.connect(self.update_progress)
+                self.install_thread.finished.connect(self.install_finished)
+                self.install_thread.error.connect(self.upload_error)
+                self.install_thread.start()
+
+                self.statusBar().showMessage("正在安装MySQL...")
+
+    def install_redis(self):
+        """安装Redis"""
+        config = self.get_server_config()
+        if not config:
+            return
+
+        host, username, password, port = config
+
+        reply = QMessageBox.question(
+            self,
+            "确认安装",
+            f"确定要在服务器 {host} 上安装Redis吗？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            self.log_output.clear()
+            self.set_inputs_enabled(False)
+
+            self.uploader = ProjectUploader(host, username, password, port)
+
+            self.install_thread = InstallThread(self.uploader, 'redis')
+            self.install_thread.log.connect(self.append_log)
+            self.install_thread.progress.connect(self.update_progress)
+            self.install_thread.finished.connect(self.install_finished)
+            self.install_thread.error.connect(self.upload_error)
+            self.install_thread.start()
+
+            self.statusBar().showMessage("正在安装Redis...")
+
+    def install_nginx(self):
+        """安装Nginx"""
+        config = self.get_server_config()
+        if not config:
+            return
+
+        host, username, password, port = config
+
+        reply = QMessageBox.question(
+            self,
+            "确认安装",
+            f"确定要在服务器 {host} 上安装Nginx吗？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            self.log_output.clear()
+            self.set_inputs_enabled(False)
+
+            self.uploader = ProjectUploader(host, username, password, port)
+
+            self.install_thread = InstallThread(self.uploader, 'nginx')
+            self.install_thread.log.connect(self.append_log)
+            self.install_thread.progress.connect(self.update_progress)
+            self.install_thread.finished.connect(self.install_finished)
+            self.install_thread.error.connect(self.upload_error)
+            self.install_thread.start()
+
+            self.statusBar().showMessage("正在安装Nginx...")
+
+    def install_all_environment(self):
+        """一键安装全部环境"""
+        config = self.get_server_config()
+        if not config:
+            return
+
+        host, username, password, port = config
+
+        # 弹出MySQL密码设置对话框
+        dialog = MySQLInstallDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            root_password = dialog.get_password()
+
+            reply = QMessageBox.question(
+                self,
+                "确认安装",
+                f"确定要在服务器 {host} 上安装全部环境吗？\n\n"
+                "将安装：MySQL, Redis, Nginx",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+
+            if reply == QMessageBox.StandardButton.Yes:
+                self.log_output.clear()
+                self.set_inputs_enabled(False)
+
+                self.uploader = ProjectUploader(host, username, password, port)
+
+                self.install_thread = InstallThread(self.uploader, 'all', root_password=root_password)
+                self.install_thread.log.connect(self.append_log)
+                self.install_thread.progress.connect(self.update_progress)
+                self.install_thread.finished.connect(self.install_finished)
+                self.install_thread.error.connect(self.upload_error)
+                self.install_thread.start()
+
+                self.statusBar().showMessage("正在安装全部环境...")
+
+    def vue_deploy_finished(self, success: bool, message: str):
+        """Vue部署完成"""
+        self.set_inputs_enabled(True)
+        self.statusBar().showMessage("部署完成")
+
+        if success:
+            QMessageBox.information(
+                self,
+                "部署成功",
+                f"Vue项目部署成功！\n\n远程路径: {message}\n\n"
+                "请确保服务器防火墙已开放80端口"
+            )
+
+    def install_finished(self, success: bool, message: str):
+        """环境安装完成"""
+        self.set_inputs_enabled(True)
+        self.statusBar().showMessage("安装完成")
+
+        if success:
+            QMessageBox.information(
+                self,
+                "安装成功",
+                message
+            )
+
     def browse_project(self):
         """浏览项目目录"""
         directory = QFileDialog.getExistingDirectory(
@@ -449,6 +699,178 @@ class DeployUploadWindow(QMainWindow):
         self.browse_btn.setEnabled(enabled)
         self.remote_input.setEnabled(enabled)
         self.test_connection_btn.setEnabled(enabled)
+
+
+class VueDeployThread(QThread):
+    """Vue部署线程"""
+
+    log = Signal(str)
+    progress = Signal(str, int, int)
+    finished = Signal(bool, str)
+    error = Signal(str)
+
+    def __init__(self, uploader: ProjectUploader, project_root: str):
+        super().__init__()
+        self.uploader = uploader
+        self.project_root = project_root
+
+    def run(self):
+        """执行Vue部署"""
+        try:
+            self.log.emit("开始部署Vue项目...")
+
+            def progress_callback(stage, current, total):
+                self.progress.emit(stage, current, total)
+                if total > 0 and current == total:
+                    self.log.emit(f"✓ {stage} 完成")
+                else:
+                    self.log.emit(f"{stage}...")
+
+            remote_path = self.uploader.deploy_vue_project(
+                self.project_root,
+                progress_callback=progress_callback
+            )
+
+            self.log.emit("✓ Vue项目部署完成")
+            self.finished.emit(True, remote_path)
+
+        except Exception as e:
+            error_msg = str(e)
+            self.log.emit(f"✗ 部署失败: {error_msg}")
+            self.error.emit(error_msg)
+
+
+class InstallThread(QThread):
+    """环境安装线程"""
+
+    log = Signal(str)
+    progress = Signal(str, int, int)
+    finished = Signal(bool, str)
+    error = Signal(str)
+
+    def __init__(self, uploader: ProjectUploader, install_type: str, root_password: str = 'root'):
+        super().__init__()
+        self.uploader = uploader
+        self.install_type = install_type
+        self.root_password = root_password
+
+    def run(self):
+        """执行环境安装"""
+        try:
+            def progress_callback(stage, current, total):
+                self.progress.emit(stage, current, total)
+                if total > 0 and current == total:
+                    self.log.emit(f"✓ {stage} 完成")
+                else:
+                    self.log.emit(f"{stage}...")
+
+            if self.install_type == 'mysql':
+                self.log.emit("开始安装MySQL...")
+                self.uploader.install_mysql(self.root_password, progress_callback)
+                self.log.emit("✓ MySQL安装完成")
+                self.finished.emit(True, "MySQL安装成功！\n\n请使用以下信息连接：\n用户名: root\n密码: " + self.root_password)
+
+            elif self.install_type == 'redis':
+                self.log.emit("开始安装Redis...")
+                self.uploader.install_redis(progress_callback)
+                self.log.emit("✓ Redis安装完成")
+                self.finished.emit(True, "Redis安装成功！\n\n服务已自动启动")
+
+            elif self.install_type == 'nginx':
+                self.log.emit("开始安装Nginx...")
+                self.uploader.install_nginx(progress_callback)
+                self.log.emit("✓ Nginx安装完成")
+                self.finished.emit(True, "Nginx安装成功！\n\n服务已自动启动\n默认监听端口: 80")
+
+            elif self.install_type == 'all':
+                self.log.emit("开始安装全部环境...")
+                self.log.emit("1/3 安装MySQL...")
+                self.uploader.install_mysql(self.root_password, progress_callback)
+                self.log.emit("✓ MySQL安装完成")
+
+                self.log.emit("2/3 安装Redis...")
+                self.uploader.install_redis(progress_callback)
+                self.log.emit("✓ Redis安装完成")
+
+                self.log.emit("3/3 安装Nginx...")
+                self.uploader.install_nginx(progress_callback)
+                self.log.emit("✓ Nginx安装完成")
+
+                self.finished.emit(True, "全部环境安装成功！\n\n已安装：\n- MySQL\n- Redis\n- Nginx\n\n所有服务已自动启动")
+
+        except Exception as e:
+            error_msg = str(e)
+            self.log.emit(f"✗ 安装失败: {error_msg}")
+            self.error.emit(error_msg)
+
+
+class MySQLInstallDialog(QDialog):
+    """MySQL安装配置对话框"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("MySQL配置")
+        self.setMinimumWidth(400)
+        self.init_ui()
+
+    def init_ui(self):
+        """初始化UI"""
+        layout = QVBoxLayout()
+
+        # 说明标签
+        info_label = QLabel("请设置MySQL root用户密码：")
+        layout.addWidget(info_label)
+
+        # 密码输入
+        password_layout = QHBoxLayout()
+        password_label = QLabel("密码:")
+        password_label.setMinimumWidth(80)
+        self.password_input = QLineEdit()
+        self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.password_input.setText("root")
+        password_layout.addWidget(password_label)
+        password_layout.addWidget(self.password_input)
+        layout.addLayout(password_layout)
+
+        # 确认密码输入
+        confirm_layout = QHBoxLayout()
+        confirm_label = QLabel("确认密码:")
+        confirm_label.setMinimumWidth(80)
+        self.confirm_input = QLineEdit()
+        self.confirm_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.confirm_input.setText("root")
+        confirm_layout.addWidget(confirm_label)
+        confirm_layout.addWidget(self.confirm_input)
+        layout.addLayout(confirm_layout)
+
+        # 按钮
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept_dialog)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self.setLayout(layout)
+
+    def accept_dialog(self):
+        """确认对话框"""
+        password = self.password_input.text()
+        confirm = self.confirm_input.text()
+
+        if not password:
+            QMessageBox.warning(self, "提示", "密码不能为空")
+            return
+
+        if password != confirm:
+            QMessageBox.warning(self, "提示", "两次输入的密码不一致")
+            return
+
+        self.accept()
+
+    def get_password(self) -> str:
+        """获取密码"""
+        return self.password_input.text()
 
 
 def main():
