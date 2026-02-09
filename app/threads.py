@@ -125,10 +125,10 @@ class SpringBootDeployThread(QThread):
     finished = Signal(bool, str)
     error = Signal(str)
 
-    def __init__(self, uploader: ProjectUploader, project_root: str):
+    def __init__(self, uploader: ProjectUploader, config: dict):
         super().__init__()
         self.uploader = uploader
-        self.project_root = project_root
+        self.config = config
 
     def run(self):
         """执行SpringBoot部署"""
@@ -143,7 +143,17 @@ class SpringBootDeployThread(QThread):
                     self.log.emit(f"{stage}...")
 
             remote_path = self.uploader.deploy_springboot_project(
-                self.project_root,
+                project_root=self.config.get("project_root", ""),
+                remote_dir=self.config.get("remote_dir"),
+                build_tool=self.config.get("build_tool", "auto"),
+                jvm_options=self.config.get("jvm_options", ""),
+                service_port=self.config.get("service_port", 8080),
+                active_profile=self.config.get("active_profile", ""),
+                build_mode=self.config.get("build_mode", "remote"),
+                skip_tests=self.config.get("skip_tests", True),
+                auto_install=self.config.get("auto_install", True),
+                clean_build=self.config.get("clean_build", True),
+                enable_service=self.config.get("enable_service", True),
                 progress_callback=progress_callback
             )
 

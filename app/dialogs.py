@@ -18,6 +18,14 @@ from PySide6.QtCore import Signal, Qt
 from .server_config import ServerConfig
 from .server_types import ServerType, get_supported_software
 
+__all__ = [
+    'ServerConfigDialog',
+    'ServerManagerDialog',
+    'MySQLInstallDialog',
+    'VueDeployDialog',
+    'SpringBootDeployDialog'
+]
+
 
 class ServerConfigDialog(QDialog):
     """单个服务器配置对话框"""
@@ -840,4 +848,256 @@ class VueDeployDialog(QDialog):
             "auto_install": self.auto_install_checkbox.isChecked(),
             "clean_build": self.clean_build_checkbox.isChecked(),
             "build_mode": "local" if self.local_build_radio.isChecked() else "remote"
+        }
+
+
+class SpringBootDeployDialog(QDialog):
+    """SpringBoot项目部署配置对话框"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.project_root = ""
+        self.setWindowTitle("SpringBoot项目部署配置")
+        self.setMinimumWidth(700)
+        self.setMinimumHeight(500)
+        self.init_ui()
+
+    def init_ui(self):
+        """初始化UI"""
+        from pathlib import Path
+        from PySide6.QtWidgets import QFileDialog, QGroupBox, QRadioButton, QButtonGroup
+
+        layout = QVBoxLayout()
+        layout.setSpacing(15)
+
+        # 标题说明
+        title_label = QLabel("配置SpringBoot项目部署参数")
+        title_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #333;")
+        layout.addWidget(title_label)
+
+        # 项目配置组
+        project_group = QGroupBox("项目配置")
+        project_layout = QVBoxLayout()
+        project_layout.setSpacing(10)
+
+        # 本地项目目录
+        root_layout = QHBoxLayout()
+        root_label = QLabel("本地项目目录:")
+        root_label.setMinimumWidth(100)
+        self.root_input = QLineEdit()
+        self.root_input.setPlaceholderText("选择本地SpringBoot项目目录")
+        browse_btn = QPushButton("选择目录")
+        browse_btn.setMaximumWidth(100)
+        browse_btn.clicked.connect(self.browse_project)
+        root_layout.addWidget(root_label)
+        root_layout.addWidget(self.root_input)
+        root_layout.addWidget(browse_btn)
+        project_layout.addLayout(root_layout)
+
+        # 远程部署目录
+        remote_layout = QHBoxLayout()
+        remote_label = QLabel("远程部署目录:")
+        remote_label.setMinimumWidth(100)
+        self.remote_input = QLineEdit()
+        self.remote_input.setPlaceholderText("例如: /home/user/springboot-apps")
+        self.remote_input.setText("/home/user/springboot-apps")
+        remote_layout.addWidget(remote_label)
+        remote_layout.addWidget(self.remote_input)
+        project_layout.addLayout(remote_layout)
+
+        # 构建工具选择
+        build_tool_layout = QHBoxLayout()
+        build_tool_label = QLabel("构建工具:")
+        build_tool_label.setMinimumWidth(100)
+        self.build_tool_combo = QComboBox()
+        self.build_tool_combo.addItem("自动检测", "auto")
+        self.build_tool_combo.addItem("Maven", "maven")
+        self.build_tool_combo.addItem("Gradle", "gradle")
+        build_tool_layout.addWidget(build_tool_label)
+        build_tool_layout.addWidget(self.build_tool_combo)
+        build_tool_layout.addStretch()
+        project_layout.addLayout(build_tool_layout)
+
+        # JVM参数配置
+        jvm_layout = QHBoxLayout()
+        jvm_label = QLabel("JVM参数:")
+        jvm_label.setMinimumWidth(100)
+        self.jvm_input = QLineEdit()
+        self.jvm_input.setPlaceholderText("例如: -Xms512m -Xmx1024m")
+        self.jvm_input.setText("-Xms512m -Xmx1024m")
+        jvm_layout.addWidget(jvm_label)
+        jvm_layout.addWidget(self.jvm_input)
+        project_layout.addLayout(jvm_layout)
+
+        project_group.setLayout(project_layout)
+        layout.addWidget(project_group)
+
+        # 服务配置组
+        service_group = QGroupBox("服务配置")
+        service_layout = QVBoxLayout()
+        service_layout.setSpacing(10)
+
+        # 服务端口
+        port_layout = QHBoxLayout()
+        port_label = QLabel("服务端口:")
+        port_label.setMinimumWidth(100)
+        self.port_input = QSpinBox()
+        self.port_input.setRange(1, 65535)
+        self.port_input.setValue(8080)
+        port_layout.addWidget(port_label)
+        port_layout.addWidget(self.port_input)
+        port_layout.addStretch()
+        service_layout.addLayout(port_layout)
+
+        # 应用配置文件
+        profile_layout = QHBoxLayout()
+        profile_label = QLabel("激活配置:")
+        profile_label.setMinimumWidth(100)
+        self.profile_input = QLineEdit()
+        self.profile_input.setPlaceholderText("例如: prod 或 dev")
+        profile_layout.addWidget(profile_label)
+        profile_layout.addWidget(self.profile_input)
+        service_layout.addLayout(profile_layout)
+
+        # 构建模式选择
+        build_mode_label = QLabel("构建模式:")
+        build_mode_label.setMinimumWidth(100)
+        build_mode_layout = QHBoxLayout()
+        build_mode_layout.addWidget(build_mode_label)
+
+        self.local_build_radio = QRadioButton("本地构建")
+        self.local_build_radio.setChecked(True)
+        self.local_build_radio.setToolTip("在本地打包jar后上传")
+
+        self.remote_build_radio = QRadioButton("远程构建")
+        self.remote_build_radio.setToolTip("上传源码后在远程打包")
+
+        # 将按钮添加到按钮组以确保互斥
+        build_mode_group = QButtonGroup(self)
+        build_mode_group.addButton(self.local_build_radio)
+        build_mode_group.addButton(self.remote_build_radio)
+
+        build_mode_layout.addWidget(self.local_build_radio)
+        build_mode_layout.addWidget(self.remote_build_radio)
+        build_mode_layout.addStretch()
+        service_layout.addLayout(build_mode_layout)
+
+        # 构建模式说明
+        build_mode_desc = QLabel(
+            "• 本地构建: 在本地执行mvn/gradle打包，上传jar文件（推荐）\n"
+            "• 远程构建: 上传源码，在服务器执行打包（需服务器安装构建工具）"
+        )
+        build_mode_desc.setStyleSheet("color: #666; font-size: 11px; padding: 5px 0;")
+        build_mode_desc.setWordWrap(True)
+        service_layout.addWidget(build_mode_desc)
+
+        service_group.setLayout(service_layout)
+        layout.addWidget(service_group)
+
+        # 部署选项组
+        options_group = QGroupBox("部署选项")
+        options_layout = QVBoxLayout()
+        options_layout.setSpacing(8)
+
+        self.skip_tests_checkbox = QPushButton("跳过测试 (-DskipTests)")
+        self.skip_tests_checkbox.setCheckable(True)
+        self.skip_tests_checkbox.setChecked(True)
+        options_layout.addWidget(self.skip_tests_checkbox)
+
+        self.auto_install_checkbox = QPushButton("自动安装Maven/Gradle (如果未安装)")
+        self.auto_install_checkbox.setCheckable(True)
+        self.auto_install_checkbox.setChecked(True)
+        options_layout.addWidget(self.auto_install_checkbox)
+
+        self.clean_build_checkbox = QPushButton("清理并重新构建 (mvn clean / gradle clean)")
+        self.clean_build_checkbox.setCheckable(True)
+        self.clean_build_checkbox.setChecked(True)
+        options_layout.addWidget(self.clean_build_checkbox)
+
+        self.enable_service_checkbox = QPushButton("启用开机自启")
+        self.enable_service_checkbox.setCheckable(True)
+        self.enable_service_checkbox.setChecked(True)
+        options_layout.addWidget(self.enable_service_checkbox)
+
+        options_group.setLayout(options_layout)
+        layout.addWidget(options_group)
+
+        # 按钮
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept_dialog)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        layout.addStretch()
+        self.setLayout(layout)
+
+    def browse_project(self):
+        """浏览项目目录"""
+        from pathlib import Path
+        directory = QFileDialog.getExistingDirectory(self, "选择SpringBoot项目目录")
+        if directory:
+            self.root_input.setText(directory)
+            self.project_root = directory
+            # 自动检测构建工具
+            self._detect_build_tool()
+
+    def _detect_build_tool(self):
+        """自动检测构建工具"""
+        from pathlib import Path
+        if not self.project_root:
+            return
+
+        project_path = Path(self.project_root)
+        has_pom = (project_path / "pom.xml").exists()
+        has_gradle = (project_path / "build.gradle").exists() or (project_path / "build.gradle.kts").exists()
+
+        if has_pom and not has_gradle:
+            self.build_tool_combo.setCurrentIndex(1)  # Maven
+        elif has_gradle and not has_pom:
+            self.build_tool_combo.setCurrentIndex(2)  # Gradle
+        # 如果两者都有或都没有，保持"自动检测"
+
+    def accept_dialog(self):
+        """确认对话框"""
+        project_root = self.root_input.text().strip()
+        if not project_root or not Path(project_root).exists():
+            QMessageBox.warning(self, "提示", "请选择有效的SpringBoot项目目录")
+            return
+
+        # 验证是否为有效的SpringBoot项目
+        pom_xml = Path(project_root) / "pom.xml"
+        build_gradle = Path(project_root) / "build.gradle"
+        build_gradle_kts = Path(project_root) / "build.gradle.kts"
+
+        if not pom_xml.exists() and not build_gradle.exists() and not build_gradle_kts.exists():
+            QMessageBox.warning(
+                self,
+                "提示",
+                "不是有效的SpringBoot项目\n\n项目目录必须包含 pom.xml (Maven) 或 build.gradle (Gradle) 文件"
+            )
+            return
+
+        remote_dir = self.remote_input.text().strip()
+        if not remote_dir:
+            QMessageBox.warning(self, "提示", "请输入远程部署目录")
+            return
+
+        self.accept()
+
+    def get_config(self) -> dict:
+        """获取配置"""
+        return {
+            "project_root": self.root_input.text().strip(),
+            "remote_dir": self.remote_input.text().strip(),
+            "build_tool": self.build_tool_combo.currentData(),
+            "jvm_options": self.jvm_input.text().strip(),
+            "service_port": self.port_input.value(),
+            "active_profile": self.profile_input.text().strip(),
+            "build_mode": "local" if self.local_build_radio.isChecked() else "remote",
+            "skip_tests": self.skip_tests_checkbox.isChecked(),
+            "auto_install": self.auto_install_checkbox.isChecked(),
+            "clean_build": self.clean_build_checkbox.isChecked(),
+            "enable_service": self.enable_service_checkbox.isChecked()
         }

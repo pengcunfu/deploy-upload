@@ -1279,8 +1279,21 @@ sudo DEBIAN_FRONTEND=noninteractive apt install -y mysql-server"""
         except Exception as e:
             raise Exception(f"PHP安装失败: {str(e)}")
 
-    def deploy_springboot_project(self, project_root: str, remote_dir: Optional[str] = None,
-                                  progress_callback: Optional[Callable[[str, int, int], None]] = None) -> str:
+    def deploy_springboot_project(
+        self,
+        project_root: str,
+        remote_dir: Optional[str] = None,
+        build_tool: str = "auto",
+        jvm_options: str = "",
+        service_port: int = 8080,
+        active_profile: str = "",
+        build_mode: str = "remote",
+        skip_tests: bool = True,
+        auto_install: bool = True,
+        clean_build: bool = True,
+        enable_service: bool = True,
+        progress_callback: Optional[Callable[[str, int, int], None]] = None
+    ) -> str:
         """
         部署SpringBoot项目到远程服务器
         包括：打包项目、上传jar文件、创建systemd服务、启动应用
@@ -1288,6 +1301,15 @@ sudo DEBIAN_FRONTEND=noninteractive apt install -y mysql-server"""
         Args:
             project_root (str): SpringBoot项目根目录
             remote_dir (str, optional): 远程部署目录
+            build_tool (str): 构建工具，"auto"/"maven"/"gradle"
+            jvm_options (str): JVM参数，如 "-Xms512m -Xmx1024m"
+            service_port (int): 服务端口
+            active_profile (str): 激活的配置文件
+            build_mode (str): 构建模式，"local" 或 "remote"
+            skip_tests (bool): 跳过测试
+            auto_install (bool): 自动安装构建工具
+            clean_build (bool): 清理并重新构建
+            enable_service (bool): 启用开机自启
             progress_callback (Callable, optional): 进度回调函数
 
         Returns:
@@ -1299,103 +1321,239 @@ sudo DEBIAN_FRONTEND=noninteractive apt install -y mysql-server"""
             remote_dir = f"/home/{self.username}/springboot-apps"
 
         try:
-            # 1. 检查是否为Maven项目
-            pom_xml = project_root / "pom.xml"
-            if not pom_xml.exists():
-                raise Exception("不是有效的Maven项目，未找到pom.xml文件")
-
-            if progress_callback:
-                progress_callback("上传SpringBoot项目", 0, 100)
-
-            # 2. 上传项目文件
-            remote_project_path = self.upload_and_extract(
-                str(project_root),
-                remote_dir,
-                progress_callback=progress_callback
-            )
-
             project_name = project_root.name
 
-            # 3. 安装Maven（如果未安装）
-            if progress_callback:
-                progress_callback("检查Maven环境", 0, 100)
+            # 检测构建工具
+            pom_xml = project_root / "pom.xml"
+            build_gradle = project_root / "build.gradle"
+            build_gradle_kts = project_root / "build.gradle.kts"
 
-            check_maven_cmd = "command -v mvn"
-            exit_status, output, error = self.execute_remote_command(check_maven_cmd)
+            if build_tool == "auto":
+                if pom_xml.exists():
+                    build_tool = "maven"
+                elif build_gradle.exists() or build_gradle_kts.exists():
+                    build_tool = "gradle"
+                else:
+                    raise Exception("未找到构建配置文件（pom.xml或build.gradle）")
 
-            if exit_status != 0:
+            # 本地构建模式
+            if build_mode == "local":
                 if progress_callback:
-                    progress_callback("安装Maven", 0, 100)
+                    progress_callback("本地构建模式", 0, 100)
 
-                # 安装Maven
-                install_maven_cmd = "sudo DEBIAN_FRONTEND=noninteractive apt install -y maven"
-                exit_status, output, error = self.execute_remote_command(install_maven_cmd)
+                # 检查本地构建工具
+                import subprocess
+                import shutil
 
-                if exit_status != 0:
-                    raise Exception(f"Maven安装失败: {error}")
+                if build_tool == "maven":
+                    if not shutil.which("mvn"):
+                        raise Exception("本地未安装Maven，请先安装或使用远程构建模式")
+                    build_cmd = "mvn"
+                    if clean_build:
+                        build_cmd += " clean"
+                    build_cmd += " package"
+                    if skip_tests:
+                        build_cmd += " -DskipTests"
+                else:  # gradle
+                    if not shutil.which("gradle"):
+                        raise Exception("本地未安装Gradle，请先安装或使用远程构建模式")
+                    build_cmd = "gradle"
+                    if clean_build:
+                        build_cmd += " clean"
+                    build_cmd += " build"
+                    if skip_tests:
+                        build_cmd += " -x test"
 
-            # 4. 打包项目
-            if progress_callback:
-                progress_callback("打包SpringBoot项目", 0, 100)
+                # 执行本地构建
+                if progress_callback:
+                    progress_callback("本地构建SpringBoot项目", 0, 100)
 
-            package_cmd = f"cd {remote_project_path} && mvn clean package -DskipTests"
-            exit_status, output, error = self.execute_remote_command(package_cmd)
+                build_process = subprocess.Popen(
+                    build_cmd,
+                    shell=True,
+                    cwd=str(project_root),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
 
-            if exit_status != 0:
-                # 尝试使用Gradle
-                build_gradle = project_root / "build.gradle"
-                if build_gradle.exists():
-                    if progress_callback:
-                        progress_callback("使用Gradle打包", 0, 100)
+                _, stderr = build_process.communicate()
 
-                    # 检查Gradle
-                    check_gradle_cmd = "command -v gradle"
-                    exit_status, output, error = self.execute_remote_command(check_gradle_cmd)
+                if build_process.returncode != 0:
+                    error_msg = stderr.decode('utf-8', errors='ignore')
+                    raise Exception(f"本地构建失败: {error_msg}")
+
+                # 查找生成的jar文件
+                if build_tool == "maven":
+                    local_jar = project_root / "target" / f"{project_name}.jar"
+                    if not local_jar.exists():
+                        # 尝试查找任何jar文件
+                        jar_files = list((project_root / "target").glob("*.jar"))
+                        if jar_files:
+                            local_jar = jar_files[0]
+                        else:
+                            raise Exception("未找到构建生成的jar文件")
+                else:  # gradle
+                    local_jar = project_root / "build" / "libs" / f"{project_name}.jar"
+                    if not local_jar.exists():
+                        jar_files = list((project_root / "build" / "libs").glob("*.jar"))
+                        if jar_files:
+                            local_jar = jar_files[0]
+                        else:
+                            raise Exception("未找到构建生成的jar文件")
+
+                # 上传jar文件
+                if progress_callback:
+                    progress_callback("上传jar文件", 0, 100)
+
+                deploy_dir = f"/opt/{project_name}"
+                mkdir_cmd = f"sudo mkdir -p {deploy_dir}"
+                self.execute_remote_command(mkdir_cmd)
+
+                # 使用SFTP上传jar文件
+                ssh = paramiko.SSHClient()
+                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                ssh.connect(
+                    self.host,
+                    port=self.port,
+                    username=self.username,
+                    password=self.password,
+                    timeout=10
+                )
+
+                sftp = ssh.open_sftp()
+                remote_jar_path = f"{deploy_dir}/{project_name}.jar"
+                sftp.put(str(local_jar), remote_jar_path)
+                sftp.close()
+                ssh.close()
+
+                remote_jar_file = remote_jar_path
+
+            else:
+                # 远程构建模式
+                # 1. 上传项目文件
+                if progress_callback:
+                    progress_callback("上传SpringBoot项目", 0, 100)
+
+                remote_project_path = self.upload_and_extract(
+                    str(project_root),
+                    remote_dir,
+                    progress_callback=progress_callback
+                )
+
+                # 2. 安装构建工具（如果需要）
+                if auto_install:
+                    if build_tool == "maven":
+                        if progress_callback:
+                            progress_callback("检查Maven环境", 0, 100)
+
+                        check_maven_cmd = "command -v mvn"
+                        exit_status, output, error = self.execute_remote_command(check_maven_cmd)
+
+                        if exit_status != 0:
+                            if progress_callback:
+                                progress_callback("安装Maven", 0, 100)
+
+                            install_maven_cmd = "sudo DEBIAN_FRONTEND=noninteractive apt install -y maven"
+                            exit_status, output, error = self.execute_remote_command(install_maven_cmd)
+
+                            if exit_status != 0:
+                                raise Exception(f"Maven安装失败: {error}")
+
+                    elif build_tool == "gradle":
+                        if progress_callback:
+                            progress_callback("检查Gradle环境", 0, 100)
+
+                        check_gradle_cmd = "command -v gradle"
+                        exit_status, output, error = self.execute_remote_command(check_gradle_cmd)
+
+                        if exit_status != 0:
+                            if progress_callback:
+                                progress_callback("安装Gradle", 0, 100)
+
+                            install_gradle_cmd = "sudo DEBIAN_FRONTEND=noninteractive apt install -y gradle"
+                            exit_status, output, error = self.execute_remote_command(install_gradle_cmd)
+
+                            if exit_status != 0:
+                                raise Exception(f"Gradle安装失败: {error}")
+
+                # 3. 打包项目
+                if progress_callback:
+                    progress_callback("打包SpringBoot项目", 0, 100)
+
+                if build_tool == "maven":
+                    package_cmd = "cd {remote_project_path} && "
+                    if clean_build:
+                        package_cmd += "mvn clean "
+                    else:
+                        package_cmd += "mvn "
+                    package_cmd += "package"
+                    if skip_tests:
+                        package_cmd += " -DskipTests"
+
+                    exit_status, output, error = self.execute_remote_command(package_cmd)
 
                     if exit_status != 0:
-                        # 安装Gradle
-                        install_gradle_cmd = "sudo DEBIAN_FRONTEND=noninteractive apt install -y gradle"
-                        exit_status, output, error = self.execute_remote_command(install_gradle_cmd)
+                        raise Exception(f"Maven打包失败: {error}")
 
-                    # 使用Gradle打包
-                    package_cmd = f"cd {remote_project_path} && gradle clean build -x test"
+                    jar_file = f"{remote_project_path}/target/*.jar"
+
+                else:  # gradle
+                    package_cmd = "cd {remote_project_path} && "
+                    if clean_build:
+                        package_cmd += "gradle clean "
+                    else:
+                        package_cmd += "gradle "
+                    package_cmd += "build"
+                    if skip_tests:
+                        package_cmd += " -x test"
+
                     exit_status, output, error = self.execute_remote_command(package_cmd)
 
                     if exit_status != 0:
                         raise Exception(f"Gradle打包失败: {error}")
 
-                    # Gradle构建的jar位置
                     jar_file = f"{remote_project_path}/build/libs/*.jar"
-                else:
-                    raise Exception(f"Maven打包失败: {error}")
-            else:
-                # Maven构建的jar位置
-                jar_file = f"{remote_project_path}/target/*.jar"
 
-            if progress_callback:
-                progress_callback("打包SpringBoot项目", 100, 100)
+                if progress_callback:
+                    progress_callback("打包SpringBoot项目", 100, 100)
 
-            # 5. 创建部署目录
-            if progress_callback:
-                progress_callback("创建部署目录", 0, 100)
+                # 4. 创建部署目录
+                if progress_callback:
+                    progress_callback("创建部署目录", 0, 100)
 
-            deploy_dir = f"/opt/{project_name}"
-            mkdir_cmd = f"sudo mkdir -p {deploy_dir}"
-            self.execute_remote_command(mkdir_cmd)
+                deploy_dir = f"/opt/{project_name}"
+                mkdir_cmd = f"sudo mkdir -p {deploy_dir}"
+                self.execute_remote_command(mkdir_cmd)
 
-            # 6. 移动jar文件到部署目录
-            if progress_callback:
-                progress_callback("部署jar文件", 0, 100)
+                # 5. 移动jar文件到部署目录
+                if progress_callback:
+                    progress_callback("部署jar文件", 0, 100)
 
-            move_cmd = f"sudo mv {jar_file} {deploy_dir}/{project_name}.jar"
-            exit_status, output, error = self.execute_remote_command(move_cmd)
+                move_cmd = f"sudo mv {jar_file} {deploy_dir}/{project_name}.jar"
+                exit_status, output, error = self.execute_remote_command(move_cmd)
 
-            if exit_status != 0:
-                raise Exception(f"移动jar文件失败: {error}")
+                if exit_status != 0:
+                    raise Exception(f"移动jar文件失败: {error}")
 
-            # 7. 创建systemd服务文件
+                remote_jar_file = f"{deploy_dir}/{project_name}.jar"
+
+            # 6. 创建systemd服务文件（两种构建模式都需要）
             if progress_callback:
                 progress_callback("创建systemd服务", 0, 100)
+
+            # 构建启动命令
+            start_cmd = "/usr/bin/java"
+            if jvm_options:
+                start_cmd += f" {jvm_options}"
+            start_cmd += f" -jar {remote_jar_file}"
+
+            # 添加配置文件参数
+            if active_profile:
+                start_cmd += f" --spring.profiles.active={active_profile}"
+
+            # 添加端口参数（如果配置了）
+            if service_port and service_port != 8080:
+                start_cmd += f" --server.port={service_port}"
 
             service_content = f"""[Unit]
 Description=Spring Boot Application - {project_name}
@@ -1403,7 +1561,7 @@ After=syslog.target network.target
 
 [Service]
 User={self.username}
-ExecStart=/usr/bin/java -jar {deploy_dir}/{project_name}.jar
+ExecStart={start_cmd}
 SuccessExitStatus=143
 Restart=always
 RestartSec=10
@@ -1416,7 +1574,7 @@ WantedBy=multi-user.target
             write_service_cmd = f"echo '{service_content}' | sudo tee {service_file}"
             self.execute_remote_command(write_service_cmd)
 
-            # 8. 重载systemd并启动服务
+            # 7. 重载systemd并启动服务
             if progress_callback:
                 progress_callback("启动应用服务", 0, 100)
 
@@ -1429,10 +1587,11 @@ WantedBy=multi-user.target
             if exit_status != 0:
                 raise Exception(f"启动服务失败: {error}")
 
-            enable_cmd = f"sudo systemctl enable {project_name}"
-            self.execute_remote_command(enable_cmd)
+            if enable_service:
+                enable_cmd = f"sudo systemctl enable {project_name}"
+                self.execute_remote_command(enable_cmd)
 
-            # 9. 检查服务状态
+            # 8. 检查服务状态
             status_cmd = f"sudo systemctl is-active {project_name}"
             exit_status, output, error = self.execute_remote_command(status_cmd)
 
@@ -1440,7 +1599,7 @@ WantedBy=multi-user.target
                 progress_callback("启动应用服务", 100, 100)
 
             # 返回部署信息
-            return f"{deploy_dir}/{project_name}.jar"
+            return remote_jar_file
 
         except Exception as e:
             raise Exception(f"SpringBoot项目部署失败: {str(e)}")

@@ -21,7 +21,7 @@ from PySide6.QtGui import QFont
 
 from .uploader import ProjectUploader
 from .server_config import ServerConfig, ServerConfigManager
-from .dialogs import ServerManagerDialog, MySQLInstallDialog, VueDeployDialog
+from .dialogs import ServerManagerDialog, MySQLInstallDialog, VueDeployDialog, SpringBootDeployDialog
 from .threads import UploadThread, VueDeployThread, SpringBootDeployThread, FlaskDeployThread, DjangoDeployThread, ExpressDeployThread, InstallThread
 from .server_types import SoftwareType
 
@@ -587,58 +587,96 @@ class DeployUploadWindow(QMainWindow):
             return
 
         host, username, password, port = config
-        project_root = self.project_input.text().strip()
 
-        if not project_root or not Path(project_root).exists():
-            QMessageBox.warning(self, "提示", "请选择有效的SpringBoot项目目录")
-            return
+        # 显示SpringBoot部署配置对话框（用户在对话框中选择项目）
+        dialog = SpringBootDeployDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            springboot_config = dialog.get_config()
 
-        # 检查是否为有效的Maven/Gradle项目
-        pom_xml = Path(project_root) / "pom.xml"
-        build_gradle = Path(project_root) / "build.gradle"
+            # 验证项目路径
+            project_root = springboot_config.get("project_root", "").strip()
+            if not project_root or not Path(project_root).exists():
+                QMessageBox.warning(self, "提示", "请选择有效的SpringBoot项目目录")
+                return
 
-        if not pom_xml.exists() and not build_gradle.exists():
-            QMessageBox.warning(
+            # 构建模式信息
+            build_mode = springboot_config.get("build_mode", "remote")
+            build_mode_text = "本地构建" if build_mode == "local" else "远程构建"
+
+            # 构建工具信息
+            build_tool = springboot_config.get("build_tool", "auto")
+            build_tool_text = {
+                "auto": "自动检测",
+                "maven": "Maven",
+                "gradle": "Gradle"
+            }.get(build_tool, "自动检测")
+
+            # 根据构建模式显示不同的操作步骤
+            if build_mode == "local":
+                steps_info = (
+                    "该操作将：\n"
+                    "1. 在本地执行打包命令（生成jar文件）\n"
+                    "2. 上传jar文件到服务器\n"
+                    "3. 创建systemd服务\n"
+                    "4. 启动应用服务\n\n"
+                    "优点：服务器负载小，构建速度快\n"
+                    "缺点：需要本地安装构建工具"
+                )
+            else:
+                steps_info = (
+                    "该操作将：\n"
+                    "1. 上传项目源码文件\n"
+                    "2. 在远程安装构建工具（如果需要）\n"
+                    "3. 在远程执行打包命令\n"
+                    "4. 创建systemd服务\n"
+                    "5. 启动应用服务\n\n"
+                    "优点：不依赖本地环境\n"
+                    "缺点：服务器负载较高，构建较慢"
+                )
+
+            # JVM参数信息
+            jvm_options = springboot_config.get("jvm_options", "").strip()
+            jvm_info = f"\nJVM参数: {jvm_options}" if jvm_options else ""
+
+            # 配置文件信息
+            active_profile = springboot_config.get("active_profile", "").strip()
+            profile_info = f"\n激活配置: {active_profile}" if active_profile else ""
+
+            # 确认对话框
+            reply = QMessageBox.question(
                 self,
-                "提示",
-                "不是有效的SpringBoot项目\n\n项目目录必须包含 pom.xml (Maven) 或 build.gradle (Gradle) 文件"
+                "确认部署",
+                f"确定要部署SpringBoot项目到服务器 {host} 吗？\n\n"
+                f"项目目录: {project_root}\n"
+                f"远程目录: {springboot_config['remote_dir']}\n"
+                f"构建模式: {build_mode_text}\n"
+                f"构建工具: {build_tool_text}\n"
+                f"服务端口: {springboot_config['service_port']}"
+                f"{jvm_info}"
+                f"{profile_info}\n\n"
+                f"{steps_info}",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
             )
-            return
 
-        # 确认对话框
-        reply = QMessageBox.question(
-            self,
-            "确认部署",
-            f"确定要部署SpringBoot项目到服务器 {host} 吗？\n\n"
-            f"项目目录: {project_root}\n\n"
-            "该操作将：\n"
-            "1. 上传项目文件\n"
-            "2. 安装Maven/Gradle（如果需要）\n"
-            "3. 执行打包命令\n"
-            "4. 创建systemd服务\n"
-            "5. 启动应用服务",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
+            if reply == QMessageBox.StandardButton.Yes:
+                # 清空日志
+                self.log_output.clear()
 
-        if reply == QMessageBox.StandardButton.Yes:
-            # 清空日志
-            self.log_output.clear()
+                # 禁用按钮
+                self.set_inputs_enabled(False)
 
-            # 禁用按钮
-            self.set_inputs_enabled(False)
+                # 创建上传器
+                self.uploader = ProjectUploader(host, username, password, port)
 
-            # 创建上传器
-            self.uploader = ProjectUploader(host, username, password, port)
+                # 在后台线程执行
+                self.deploy_thread = SpringBootDeployThread(self.uploader, springboot_config)
+                self.deploy_thread.log.connect(self.append_log)
+                self.deploy_thread.progress.connect(self.update_progress)
+                self.deploy_thread.finished.connect(self.springboot_deploy_finished)
+                self.deploy_thread.error.connect(self.upload_error)
+                self.deploy_thread.start()
 
-            # 在后台线程执行
-            self.deploy_thread = SpringBootDeployThread(self.uploader, project_root)
-            self.deploy_thread.log.connect(self.append_log)
-            self.deploy_thread.progress.connect(self.update_progress)
-            self.deploy_thread.finished.connect(self.springboot_deploy_finished)
-            self.deploy_thread.error.connect(self.upload_error)
-            self.deploy_thread.start()
-
-            self.statusBar().showMessage("正在部署SpringBoot项目...")
+                self.statusBar().showMessage("正在部署SpringBoot项目...")
 
     def springboot_deploy_finished(self, success: bool, message: str):
         """SpringBoot部署完成"""
