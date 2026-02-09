@@ -1220,3 +1220,529 @@ WantedBy=multi-user.target
         except Exception as e:
             raise Exception(f"SpringBoot项目部署失败: {str(e)}")
 
+    def deploy_flask_project(self, project_root: str, remote_dir: Optional[str] = None,
+                            progress_callback: Optional[Callable[[str, int, int], None]] = None) -> str:
+        """
+        部署Flask项目到远程服务器
+        包括：上传项目、创建虚拟环境、安装依赖、配置Gunicorn、配置Nginx、启动服务
+
+        Args:
+            project_root (str): Flask项目根目录
+            remote_dir (str, optional): 远程部署目录
+            progress_callback (Callable, optional): 进度回调函数
+
+        Returns:
+            str: 部署完成后的项目路径
+        """
+        project_root = Path(project_root).resolve()
+
+        if remote_dir is None:
+            remote_dir = f"/home/{self.username}/flask-apps"
+
+        try:
+            # 1. 检查是否为Flask项目
+            requirements_txt = project_root / "requirements.txt"
+            app_py = project_root / "app.py"
+
+            if not app_py.exists():
+                # 检查其他常见的Flask入口文件
+                common_entries = ["main.py", "run.py", "wsgi.py", "application.py"]
+                has_entry = any((project_root / entry).exists() for entry in common_entries)
+                if not has_entry:
+                    raise Exception("不是有效的Flask项目，未找到app.py或其他入口文件")
+
+            if progress_callback:
+                progress_callback("上传Flask项目", 0, 100)
+
+            # 2. 上传项目文件
+            remote_project_path = self.upload_and_extract(
+                str(project_root),
+                remote_dir,
+                progress_callback=progress_callback
+            )
+
+            project_name = project_root.name
+
+            # 3. 创建Python虚拟环境
+            if progress_callback:
+                progress_callback("创建Python虚拟环境", 0, 100)
+
+            venv_cmd = f"cd {remote_project_path} && python3 -m venv venv"
+            exit_status, output, error = self.execute_remote_command(venv_cmd)
+
+            if exit_status != 0:
+                raise Exception(f"创建虚拟环境失败: {error}")
+
+            # 4. 安装Python依赖
+            if progress_callback:
+                progress_callback("安装Python依赖", 0, 100)
+
+            if requirements_txt.exists():
+                pip_cmd = f"cd {remote_project_path} && ./venv/bin/pip install -r requirements.txt"
+            else:
+                # 安装基础依赖
+                pip_cmd = f"cd {remote_project_path} && ./venv/bin/pip install flask gunicorn"
+
+            exit_status, output, error = self.execute_remote_command(pip_cmd)
+
+            if exit_status != 0:
+                raise Exception(f"安装依赖失败: {error}")
+
+            # 5. 创建Gunicorn配置
+            if progress_callback:
+                progress_callback("配置Gunicorn", 0, 100)
+
+            # 查找Flask入口文件
+            entry_file = "app.py"
+            for file in ["app.py", "main.py", "run.py", "wsgi.py", "application.py"]:
+                if (project_root / file).exists():
+                    entry_file = file
+                    break
+
+            gunicorn_service_content = f"""[Unit]
+Description=Gunicorn instance to serve {project_name}
+After=network.target
+
+[Service]
+User={self.username}
+Group=www-data
+WorkingDirectory={remote_project_path}
+Environment="PATH={remote_project_path}/venv/bin"
+ExecStart={remote_project_path}/venv/bin/gunicorn --workers 3 --bind unix:{project_name}.sock -m 007 {entry_file.replace('.py', ':app')}
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+            service_file = f"/etc/systemd/system/{project_name}.service"
+            write_service_cmd = f"echo '{gunicorn_service_content}' | sudo tee {service_file}"
+            self.execute_remote_command(write_service_cmd)
+
+            # 6. 启动Gunicorn服务
+            if progress_callback:
+                progress_callback("启动Gunicorn服务", 0, 100)
+
+            reload_cmd = "sudo systemctl daemon-reload"
+            self.execute_remote_command(reload_cmd)
+
+            start_cmd = f"sudo systemctl start {project_name}"
+            exit_status, output, error = self.execute_remote_command(start_cmd)
+
+            if exit_status != 0:
+                raise Exception(f"启动Gunicorn服务失败: {error}")
+
+            enable_cmd = f"sudo systemctl enable {project_name}"
+            self.execute_remote_command(enable_cmd)
+
+            # 7. 配置Nginx
+            if progress_callback:
+                progress_callback("配置Nginx", 0, 100)
+
+            nginx_config = f"""
+server {{
+    listen 80;
+    server_name _;
+
+    location / {{
+        include proxy_params;
+        proxy_pass http://unix:{remote_project_path}/{project_name}.sock;
+    }}
+}}
+"""
+
+            nginx_conf_path = f"/etc/nginx/sites-available/{project_name}"
+            nginx_enabled_path = f"/etc/nginx/sites-enabled/{project_name}"
+
+            write_config_cmd = f"echo '{nginx_config}' | sudo tee {nginx_conf_path}"
+            self.execute_remote_command(write_config_cmd)
+
+            enable_site_cmd = f"sudo ln -sf {nginx_conf_path} {nginx_enabled_path}"
+            self.execute_remote_command(enable_site_cmd)
+
+            # 测试Nginx配置
+            test_nginx_cmd = "sudo nginx -t"
+            exit_status, output, error = self.execute_remote_command(test_nginx_cmd)
+
+            if exit_status != 0:
+                raise Exception(f"Nginx配置测试失败: {error}")
+
+            # 重启Nginx
+            reload_nginx_cmd = "sudo systemctl reload nginx"
+            self.execute_remote_command(reload_nginx_cmd)
+
+            if progress_callback:
+                progress_callback("配置Nginx", 100, 100)
+
+            return remote_project_path
+
+        except Exception as e:
+            raise Exception(f"Flask项目部署失败: {str(e)}")
+
+    def deploy_django_project(self, project_root: str, remote_dir: Optional[str] = None,
+                             progress_callback: Optional[Callable[[str, int, int], None]] = None) -> str:
+        """
+        部署Django项目到远程服务器
+        包括：上传项目、创建虚拟环境、安装依赖、迁移数据库、配置Gunicorn、配置Nginx、启动服务
+
+        Args:
+            project_root (str): Django项目根目录
+            remote_dir (str, optional): 远程部署目录
+            progress_callback (Callable, optional): 进度回调函数
+
+        Returns:
+            str: 部署完成后的项目路径
+        """
+        project_root = Path(project_root).resolve()
+
+        if remote_dir is None:
+            remote_dir = f"/home/{self.username}/django-apps"
+
+        try:
+            # 1. 检查是否为Django项目
+            manage_py = project_root / "manage.py"
+
+            if not manage_py.exists():
+                raise Exception("不是有效的Django项目，未找到manage.py文件")
+
+            if progress_callback:
+                progress_callback("上传Django项目", 0, 100)
+
+            # 2. 上传项目文件
+            remote_project_path = self.upload_and_extract(
+                str(project_root),
+                remote_dir,
+                progress_callback=progress_callback
+            )
+
+            project_name = project_root.name
+
+            # 3. 创建Python虚拟环境
+            if progress_callback:
+                progress_callback("创建Python虚拟环境", 0, 100)
+
+            venv_cmd = f"cd {remote_project_path} && python3 -m venv venv"
+            exit_status, output, error = self.execute_remote_command(venv_cmd)
+
+            if exit_status != 0:
+                raise Exception(f"创建虚拟环境失败: {error}")
+
+            # 4. 安装Python依赖
+            if progress_callback:
+                progress_callback("安装Python依赖", 0, 100)
+
+            requirements_txt = project_root / "requirements.txt"
+            if requirements_txt.exists():
+                pip_cmd = f"cd {remote_project_path} && ./venv/bin/pip install -r requirements.txt"
+            else:
+                # 安装基础依赖
+                pip_cmd = f"cd {remote_project_path} && ./venv/bin/pip install django gunicorn psycopg2-binary"
+
+            exit_status, output, error = self.execute_remote_command(pip_cmd)
+
+            if exit_status != 0:
+                raise Exception(f"安装依赖失败: {error}")
+
+            # 5. 迁移数据库
+            if progress_callback:
+                progress_callback("迁移数据库", 0, 100)
+
+            migrate_cmd = f"cd {remote_project_path} && ./venv/bin/python manage.py migrate"
+            exit_status, output, error = self.execute_remote_command(migrate_cmd)
+
+            if exit_status != 0:
+                # 迁移失败可能不是致命错误，记录警告
+                if progress_callback:
+                    progress_callback("警告: 数据库迁移失败，请检查配置", 0, 100)
+
+            # 6. 收集静态文件
+            if progress_callback:
+                progress_callback("收集静态文件", 0, 100)
+
+            # 创建settings文件中的DEBUG=False设置
+            static_cmd = f"cd {remote_project_path} && ./venv/bin/python manage.py collectstatic --noinput"
+            exit_status, output, error = self.execute_remote_command(static_cmd)
+
+            # 7. 创建Gunicorn配置
+            if progress_callback:
+                progress_callback("配置Gunicorn", 0, 100)
+
+            # 查找Django项目的wsgi.py
+            wsgi_file = "wsgi.py"
+            for root, _, files in os.walk(project_root):
+                if "wsgi.py" in files:
+                    rel_path = Path(root).relative_to(project_root)
+                    wsgi_file = str(rel_path / "wsgi.py").replace("\\", "/")
+                    break
+
+            # 提取Django项目名称（通常是包含wsgi.py的目录的父目录）
+            django_project_name = wsgi_file.split("/")[0] if "/" in wsgi_file else project_name
+
+            gunicorn_service_content = f"""[Unit]
+Description=Gunicorn daemon for Django project {project_name}
+After=network.target
+
+[Service]
+User={self.username}
+Group=www-data
+WorkingDirectory={remote_project_path}
+Environment="PATH={remote_project_path}/venv/bin"
+ExecStart={remote_project_path}/venv/bin/gunicorn --workers 3 --bind unix:{project_name}.sock {django_project_name}.wsgi:application
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+            service_file = f"/etc/systemd/system/{project_name}.service"
+            write_service_cmd = f"echo '{gunicorn_service_content}' | sudo tee {service_file}"
+            self.execute_remote_command(write_service_cmd)
+
+            # 8. 启动Gunicorn服务
+            if progress_callback:
+                progress_callback("启动Gunicorn服务", 0, 100)
+
+            reload_cmd = "sudo systemctl daemon-reload"
+            self.execute_remote_command(reload_cmd)
+
+            start_cmd = f"sudo systemctl start {project_name}"
+            exit_status, output, error = self.execute_remote_command(start_cmd)
+
+            if exit_status != 0:
+                raise Exception(f"启动Gunicorn服务失败: {error}")
+
+            enable_cmd = f"sudo systemctl enable {project_name}"
+            self.execute_remote_command(enable_cmd)
+
+            # 9. 配置Nginx
+            if progress_callback:
+                progress_callback("配置Nginx", 0, 100)
+
+            nginx_config = f"""
+server {{
+    listen 80;
+    server_name _;
+
+    location / {{
+        include proxy_params;
+        proxy_pass http://unix:{remote_project_path}/{project_name}.sock;
+    }}
+
+    # 静态文件
+    location /static/ {{
+        alias {remote_project_path}/static/;
+    }}
+
+    # 媒体文件
+    location /media/ {{
+        alias {remote_project_path}/media/;
+    }}
+}}
+"""
+
+            nginx_conf_path = f"/etc/nginx/sites-available/{project_name}"
+            nginx_enabled_path = f"/etc/nginx/sites-enabled/{project_name}"
+
+            write_config_cmd = f"echo '{nginx_config}' | sudo tee {nginx_conf_path}"
+            self.execute_remote_command(write_config_cmd)
+
+            enable_site_cmd = f"sudo ln -sf {nginx_conf_path} {nginx_enabled_path}"
+            self.execute_remote_command(enable_site_cmd)
+
+            # 测试Nginx配置
+            test_nginx_cmd = "sudo nginx -t"
+            exit_status, output, error = self.execute_remote_command(test_nginx_cmd)
+
+            if exit_status != 0:
+                raise Exception(f"Nginx配置测试失败: {error}")
+
+            # 重启Nginx
+            reload_nginx_cmd = "sudo systemctl reload nginx"
+            self.execute_remote_command(reload_nginx_cmd)
+
+            if progress_callback:
+                progress_callback("配置Nginx", 100, 100)
+
+            return remote_project_path
+
+        except Exception as e:
+            raise Exception(f"Django项目部署失败: {str(e)}")
+
+    def deploy_express_project(self, project_root: str, remote_dir: Optional[str] = None,
+                              progress_callback: Optional[Callable[[str, int, int], None]] = None) -> str:
+        """
+        部署Express项目到远程服务器
+        包括：上传项目、安装依赖、配置PM2、配置Nginx、启动服务
+
+        Args:
+            project_root (str): Express项目根目录
+            remote_dir (str, optional): 远程部署目录
+            progress_callback (Callable, optional): 进度回调函数
+
+        Returns:
+            str: 部署完成后的项目路径
+        """
+        project_root = Path(project_root).resolve()
+
+        if remote_dir is None:
+            remote_dir = f"/home/{self.username}/express-apps"
+
+        try:
+            # 1. 检查是否为Express项目
+            package_json = project_root / "package.json"
+
+            if not package_json.exists():
+                raise Exception("不是有效的Express/Node.js项目，未找到package.json文件")
+
+            if progress_callback:
+                progress_callback("上传Express项目", 0, 100)
+
+            # 2. 上传项目文件
+            remote_project_path = self.upload_and_extract(
+                str(project_root),
+                remote_dir,
+                progress_callback=progress_callback
+            )
+
+            project_name = project_root.name
+
+            # 3. 检查并安装PM2（进程管理器）
+            if progress_callback:
+                progress_callback("检查PM2环境", 0, 100)
+
+            check_pm2_cmd = "command -v pm2"
+            exit_status, output, error = self.execute_remote_command(check_pm2_cmd)
+
+            if exit_status != 0:
+                if progress_callback:
+                    progress_callback("安装PM2", 0, 100)
+
+                # 安装PM2
+                install_pm2_cmd = "sudo npm install -g pm2"
+                exit_status, output, error = self.execute_remote_command(install_pm2_cmd)
+
+                if exit_status != 0:
+                    raise Exception(f"PM2安装失败: {error}")
+
+            # 4. 安装Node.js依赖
+            if progress_callback:
+                progress_callback("安装Node.js依赖", 0, 100)
+
+            install_cmd = f"cd {remote_project_path} && npm install --production"
+            exit_status, output, error = self.execute_remote_command(install_cmd)
+
+            if exit_status != 0:
+                raise Exception(f"安装依赖失败: {error}")
+
+            # 5. 查找Express入口文件
+            if progress_callback:
+                progress_callback("查找入口文件", 0, 100)
+
+            # 读取package.json查找入口文件
+            read_package_cmd = f"cat {remote_project_path}/package.json"
+            exit_status, package_json_content, error = self.execute_remote_command(read_package_cmd)
+
+            entry_file = "app.js"  # 默认入口文件
+            if exit_status == 0 and "main" in package_json_content:
+                # 尝试从package.json中提取main字段
+                try:
+                    import json
+                    package_data = json.loads(package_json_content)
+                    if "main" in package_data:
+                        entry_file = package_data["main"]
+                except:
+                    pass
+
+            # 验证入口文件存在
+            check_entry_cmd = f"test -f {remote_project_path}/{entry_file} && echo 'exists'"
+            exit_status, output, error = self.execute_remote_command(check_entry_cmd)
+
+            if exit_status != 0 or "exists" not in output:
+                # 尝试其他常见入口文件
+                common_entries = ["app.js", "server.js", "index.js", "main.js"]
+                for test_entry in common_entries:
+                    test_cmd = f"test -f {remote_project_path}/{test_entry} && echo 'found'"
+                    exit_status, output, error = self.execute_remote_command(test_cmd)
+                    if exit_status == 0 and "found" in output:
+                        entry_file = test_entry
+                        break
+
+            # 6. 启动Express应用（使用PM2）
+            if progress_callback:
+                progress_callback("启动Express应用", 0, 100)
+
+            # 先停止可能存在的旧进程
+            stop_cmd = f"pm2 stop {project_name} 2>/dev/null || true"
+            self.execute_remote_command(stop_cmd)
+
+            delete_cmd = f"pm2 delete {project_name} 2>/dev/null || true"
+            self.execute_remote_command(delete_cmd)
+
+            # 启动应用
+            start_cmd = f"cd {remote_project_path} && pm2 start {entry_file} --name {project_name}"
+            exit_status, output, error = self.execute_remote_command(start_cmd)
+
+            if exit_status != 0:
+                raise Exception(f"启动Express应用失败: {error}")
+
+            # 保存PM2进程列表
+            save_cmd = "pm2 save"
+            self.execute_remote_command(save_cmd)
+
+            # 设置PM2开机自启
+            startup_cmd = "pm2 startup systemd -u ${USER} --hp /home/${USER} 2>/dev/null || env PATH=$PATH:/usr/bin pm2 startup systemd -u ${USER} --hp /home/${USER} 2>/dev/null || true"
+            self.execute_remote_command(startup_cmd)
+
+            # 7. 配置Nginx反向代理
+            if progress_callback:
+                progress_callback("配置Nginx", 0, 100)
+
+            # 获取Express应用的端口（默认3000）
+            # 可以通过环境变量或配置文件读取，这里使用默认3000
+            app_port = "3000"
+
+            nginx_config = f"""
+server {{
+    listen 80;
+    server_name _;
+
+    location / {{
+        proxy_pass http://127.0.0.1:{app_port};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }}
+}}
+"""
+
+            nginx_conf_path = f"/etc/nginx/sites-available/{project_name}"
+            nginx_enabled_path = f"/etc/nginx/sites-enabled/{project_name}"
+
+            write_config_cmd = f"echo '{nginx_config}' | sudo tee {nginx_conf_path}"
+            self.execute_remote_command(write_config_cmd)
+
+            enable_site_cmd = f"sudo ln -sf {nginx_conf_path} {nginx_enabled_path}"
+            self.execute_remote_command(enable_site_cmd)
+
+            # 测试Nginx配置
+            test_nginx_cmd = "sudo nginx -t"
+            exit_status, output, error = self.execute_remote_command(test_nginx_cmd)
+
+            if exit_status != 0:
+                raise Exception(f"Nginx配置测试失败: {error}")
+
+            # 重启Nginx
+            reload_nginx_cmd = "sudo systemctl reload nginx"
+            self.execute_remote_command(reload_nginx_cmd)
+
+            if progress_callback:
+                progress_callback("配置Nginx", 100, 100)
+
+            return remote_project_path
+
+        except Exception as e:
+            raise Exception(f"Express项目部署失败: {str(e)}")
+

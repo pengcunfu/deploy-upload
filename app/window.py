@@ -22,7 +22,7 @@ from PySide6.QtGui import QFont
 from .uploader import ProjectUploader
 from .server_config import ServerConfig, ServerConfigManager
 from .dialogs import ServerManagerDialog, MySQLInstallDialog
-from .threads import UploadThread, VueDeployThread, SpringBootDeployThread, InstallThread
+from .threads import UploadThread, VueDeployThread, SpringBootDeployThread, FlaskDeployThread, DjangoDeployThread, ExpressDeployThread, InstallThread
 from .server_types import SoftwareType
 
 
@@ -295,6 +295,15 @@ class DeployUploadWindow(QMainWindow):
 
         springboot_deploy_action = deploy_menu.addAction("SpringBoot项目一键部署(&S)")
         springboot_deploy_action.triggered.connect(self.deploy_springboot_project)
+
+        flask_deploy_action = deploy_menu.addAction("Flask项目一键部署(&F)")
+        flask_deploy_action.triggered.connect(self.deploy_flask_project)
+
+        django_deploy_action = deploy_menu.addAction("Django项目一键部署(&D)")
+        django_deploy_action.triggered.connect(self.deploy_django_project)
+
+        express_deploy_action = deploy_menu.addAction("Express项目一键部署(&E)")
+        express_deploy_action.triggered.connect(self.deploy_express_project)
 
         deploy_menu.addSeparator()
 
@@ -594,6 +603,249 @@ class DeployUploadWindow(QMainWindow):
                 f"sudo systemctl status <项目名>\n"
                 f"sudo systemctl restart <项目名>\n"
                 f"sudo systemctl stop <项目名>"
+            )
+        else:
+            QMessageBox.critical(self, "部署失败", message)
+
+    def deploy_flask_project(self):
+        """Flask项目一键部署"""
+        config = self.get_server_config()
+        if not config:
+            return
+
+        host, username, password, port = config
+        project_root = self.project_input.text().strip()
+
+        if not project_root or not Path(project_root).exists():
+            QMessageBox.warning(self, "提示", "请选择有效的Flask项目目录")
+            return
+
+        # 检查是否为有效的Flask项目
+        app_py = Path(project_root) / "app.py"
+        if not app_py.exists():
+            # 检查其他常见的Flask入口文件
+            common_entries = ["main.py", "run.py", "wsgi.py"]
+            has_entry = any((Path(project_root) / entry).exists() for entry in common_entries)
+            if not has_entry:
+                QMessageBox.warning(
+                    self,
+                    "提示",
+                    "不是有效的Flask项目\n\n项目目录必须包含app.py或其他入口文件（main.py, run.py, wsgi.py等）"
+                )
+                return
+
+        # 确认对话框
+        reply = QMessageBox.question(
+            self,
+            "确认部署",
+            f"确定要部署Flask项目到服务器 {host} 吗？\n\n"
+            f"项目目录: {project_root}\n\n"
+            "该操作将：\n"
+            "1. 上传项目文件\n"
+            "2. 创建Python虚拟环境\n"
+            "3. 安装依赖（requirements.txt）\n"
+            "4. 配置Gunicorn服务\n"
+            "5. 配置Nginx反向代理\n"
+            "6. 启动应用服务",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            # 清空日志
+            self.log_output.clear()
+
+            # 禁用按钮
+            self.set_inputs_enabled(False)
+
+            # 创建上传器
+            self.uploader = ProjectUploader(host, username, password, port)
+
+            # 在后台线程执行
+            self.deploy_thread = FlaskDeployThread(self.uploader, project_root)
+            self.deploy_thread.log.connect(self.append_log)
+            self.deploy_thread.progress.connect(self.update_progress)
+            self.deploy_thread.finished.connect(self.flask_deploy_finished)
+            self.deploy_thread.error.connect(self.upload_error)
+            self.deploy_thread.start()
+
+            self.statusBar().showMessage("正在部署Flask项目...")
+
+    def flask_deploy_finished(self, success: bool, message: str):
+        """Flask部署完成"""
+        self.set_inputs_enabled(True)
+        self.statusBar().showMessage("部署完成")
+
+        if success:
+            QMessageBox.information(
+                self,
+                "部署成功",
+                f"Flask项目部署成功！\n\n部署路径: {message}\n\n"
+                "应用已通过Gunicorn和Nginx部署，可以使用以下命令管理：\n"
+                f"sudo systemctl status <项目名>\n"
+                f"sudo systemctl restart <项目名>\n"
+                f"sudo systemctl stop <项目名>\n\n"
+                f"服务已通过Nginx在80端口提供访问"
+            )
+        else:
+            QMessageBox.critical(self, "部署失败", message)
+
+    def deploy_django_project(self):
+        """Django项目一键部署"""
+        config = self.get_server_config()
+        if not config:
+            return
+
+        host, username, password, port = config
+        project_root = self.project_input.text().strip()
+
+        if not project_root or not Path(project_root).exists():
+            QMessageBox.warning(self, "提示", "请选择有效的Django项目目录")
+            return
+
+        # 检查是否为有效的Django项目
+        manage_py = Path(project_root) / "manage.py"
+        if not manage_py.exists():
+            QMessageBox.warning(
+                self,
+                "提示",
+                "不是有效的Django项目\n\n项目目录必须包含manage.py文件"
+            )
+            return
+
+        # 确认对话框
+        reply = QMessageBox.question(
+            self,
+            "确认部署",
+            f"确定要部署Django项目到服务器 {host} 吗？\n\n"
+            f"项目目录: {project_root}\n\n"
+            "该操作将：\n"
+            "1. 上传项目文件\n"
+            "2. 创建Python虚拟环境\n"
+            "3. 安装依赖（requirements.txt）\n"
+            "4. 执行数据库迁移\n"
+            "5. 收集静态文件\n"
+            "6. 配置Gunicorn服务\n"
+            "7. 配置Nginx反向代理\n"
+            "8. 启动应用服务",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            # 清空日志
+            self.log_output.clear()
+
+            # 禁用按钮
+            self.set_inputs_enabled(False)
+
+            # 创建上传器
+            self.uploader = ProjectUploader(host, username, password, port)
+
+            # 在后台线程执行
+            self.deploy_thread = DjangoDeployThread(self.uploader, project_root)
+            self.deploy_thread.log.connect(self.append_log)
+            self.deploy_thread.progress.connect(self.update_progress)
+            self.deploy_thread.finished.connect(self.django_deploy_finished)
+            self.deploy_thread.error.connect(self.upload_error)
+            self.deploy_thread.start()
+
+            self.statusBar().showMessage("正在部署Django项目...")
+
+    def django_deploy_finished(self, success: bool, message: str):
+        """Django部署完成"""
+        self.set_inputs_enabled(True)
+        self.statusBar().showMessage("部署完成")
+
+        if success:
+            QMessageBox.information(
+                self,
+                "部署成功",
+                f"Django项目部署成功！\n\n部署路径: {message}\n\n"
+                "应用已通过Gunicorn和Nginx部署，可以使用以下命令管理：\n"
+                f"sudo systemctl status <项目名>\n"
+                f"sudo systemctl restart <项目名>\n"
+                f"sudo systemctl stop <项目名>\n\n"
+                f"服务已通过Nginx在80端口提供访问\n"
+                f"静态文件和媒体文件已配置"
+            )
+        else:
+            QMessageBox.critical(self, "部署失败", message)
+
+    def deploy_express_project(self):
+        """Express项目一键部署"""
+        config = self.get_server_config()
+        if not config:
+            return
+
+        host, username, password, port = config
+        project_root = self.project_input.text().strip()
+
+        if not project_root or not Path(project_root).exists():
+            QMessageBox.warning(self, "提示", "请选择有效的Express项目目录")
+            return
+
+        # 检查是否为有效的Express/Node.js项目
+        package_json = Path(project_root) / "package.json"
+        if not package_json.exists():
+            QMessageBox.warning(
+                self,
+                "提示",
+                "不是有效的Express/Node.js项目\n\n项目目录必须包含package.json文件"
+            )
+            return
+
+        # 确认对话框
+        reply = QMessageBox.question(
+            self,
+            "确认部署",
+            f"确定要部署Express项目到服务器 {host} 吗？\n\n"
+            f"项目目录: {project_root}\n\n"
+            "该操作将：\n"
+            "1. 上传项目文件\n"
+            "2. 安装PM2进程管理器（如果需要）\n"
+            "3. 安装Node.js依赖（npm install）\n"
+            "4. 使用PM2启动应用\n"
+            "5. 配置Nginx反向代理\n"
+            "6. 设置开机自启",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            # 清空日志
+            self.log_output.clear()
+
+            # 禁用按钮
+            self.set_inputs_enabled(False)
+
+            # 创建上传器
+            self.uploader = ProjectUploader(host, username, password, port)
+
+            # 在后台线程执行
+            self.deploy_thread = ExpressDeployThread(self.uploader, project_root)
+            self.deploy_thread.log.connect(self.append_log)
+            self.deploy_thread.progress.connect(self.update_progress)
+            self.deploy_thread.finished.connect(self.express_deploy_finished)
+            self.deploy_thread.error.connect(self.upload_error)
+            self.deploy_thread.start()
+
+            self.statusBar().showMessage("正在部署Express项目...")
+
+    def express_deploy_finished(self, success: bool, message: str):
+        """Express部署完成"""
+        self.set_inputs_enabled(True)
+        self.statusBar().showMessage("部署完成")
+
+        if success:
+            QMessageBox.information(
+                self,
+                "部署成功",
+                f"Express项目部署成功！\n\n部署路径: {message}\n\n"
+                "应用已通过PM2和Nginx部署，可以使用以下命令管理：\n"
+                f"pm2 status\n"
+                f"pm2 restart <项目名>\n"
+                f"pm2 stop <项目名>\n"
+                f"pm2 logs <项目名>\n\n"
+                f"服务已通过Nginx在80端口提供访问\n"
+                f"PM2已配置开机自启"
             )
         else:
             QMessageBox.critical(self, "部署失败", message)
