@@ -77,10 +77,10 @@ class VueDeployThread(QThread):
     finished = Signal(bool, str)
     error = Signal(str)
 
-    def __init__(self, uploader: ProjectUploader, project_root: str):
+    def __init__(self, uploader: ProjectUploader, config: dict):
         super().__init__()
         self.uploader = uploader
-        self.project_root = project_root
+        self.config = config
 
     def run(self):
         """执行Vue部署"""
@@ -95,7 +95,15 @@ class VueDeployThread(QThread):
                     self.log.emit(f"{stage}...")
 
             remote_path = self.uploader.deploy_vue_project(
-                self.project_root,
+                project_root=self.config.get("project_root", ""),
+                remote_dir=self.config.get("remote_dir"),
+                build_command=self.config.get("build_command", "npm run build"),
+                nginx_port=self.config.get("nginx_port", 80),
+                server_name=self.config.get("server_name", "_"),
+                enable_ssl=self.config.get("enable_ssl", False),
+                proxy_configs=self.config.get("proxy_configs", []),
+                auto_install=self.config.get("auto_install", True),
+                clean_build=self.config.get("clean_build", False),
                 progress_callback=progress_callback
             )
 

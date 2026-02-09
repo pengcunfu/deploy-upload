@@ -427,8 +427,19 @@ class ProjectUploader:
 
         return exit_status, output, error
 
-    def deploy_vue_project(self, project_root: str, remote_dir: Optional[str] = None,
-                          progress_callback: Optional[Callable[[str, int, int], None]] = None) -> str:
+    def deploy_vue_project(
+        self,
+        project_root: str,
+        remote_dir: Optional[str] = None,
+        build_command: str = "npm run build",
+        nginx_port: int = 80,
+        server_name: str = "_",
+        enable_ssl: bool = False,
+        proxy_configs: Optional[List[dict]] = None,
+        auto_install: bool = True,
+        clean_build: bool = False,
+        progress_callback: Optional[Callable[[str, int, int], None]] = None
+    ) -> str:
         """
         部署Vue项目到远程服务器
         包括：上传项目、安装依赖、构建、配置Nginx
@@ -436,12 +447,20 @@ class ProjectUploader:
         Args:
             project_root (str): Vue项目根目录
             remote_dir (str, optional): 远程部署目录
+            build_command (str): 构建命令，默认为 "npm run build"
+            nginx_port (int): Nginx监听端口，默认为 80
+            server_name (str): 服务器名称，默认为 "_"
+            enable_ssl (bool): 是否启用SSL，默认为 False
+            proxy_configs (list, optional): API代理配置列表
+            auto_install (bool): 自动安装Node.js，默认为 True
+            clean_build (bool): 清理并重新构建，默认为 False
             progress_callback (Callable, optional): 进度回调函数
 
         Returns:
             str: 部署完成后的项目路径
         """
         project_root = Path(project_root).resolve()
+        proxy_configs = proxy_configs or []
 
         if remote_dir is None:
             remote_dir = f"/home/{self.username}/vue-apps"
@@ -457,11 +476,37 @@ class ProjectUploader:
                 progress_callback=progress_callback
             )
 
-            # 2. 安装Node.js依赖并构建
+            project_name = project_root.name
+
+            # 2. 检查并安装Node.js（如果需要）
+            if auto_install:
+                if progress_callback:
+                    progress_callback("检查Node.js环境", 0, 100)
+
+                check_node_cmd = "command -v node"
+                exit_status, output, error = self.execute_remote_command(check_node_cmd)
+
+                if exit_status != 0:
+                    if progress_callback:
+                        progress_callback("安装Node.js", 0, 100)
+
+                    # 安装Node.js
+                    install_node_cmd = "curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash - && sudo DEBIAN_FRONTEND=noninteractive apt install -y nodejs"
+                    exit_status, output, error = self.execute_remote_command(install_node_cmd)
+
+                    if exit_status != 0:
+                        raise Exception(f"Node.js安装失败: {error}")
+
+            # 3. 安装依赖并构建
             if progress_callback:
                 progress_callback("安装Node.js依赖", 0, 100)
 
-            install_cmd = f"cd {remote_project_path} && npm install"
+            if clean_build:
+                # 清理node_modules并重新安装
+                install_cmd = f"cd {remote_project_path} && rm -rf node_modules package-lock.json && npm install"
+            else:
+                install_cmd = f"cd {remote_project_path} && npm install"
+
             exit_status, output, error = self.execute_remote_command(install_cmd)
 
             if exit_status != 0:
@@ -470,35 +515,62 @@ class ProjectUploader:
             if progress_callback:
                 progress_callback("构建Vue项目", 0, 100)
 
-            build_cmd = f"cd {remote_project_path} && npm run build"
+            build_cmd = f"cd {remote_project_path} && {build_command}"
             exit_status, output, error = self.execute_remote_command(build_cmd)
 
             if exit_status != 0:
                 raise Exception(f"构建失败: {error}")
 
-            # 3. 配置Nginx
+            # 4. 配置Nginx
             if progress_callback:
                 progress_callback("配置Nginx", 0, 100)
 
-            project_name = project_root.name
-            nginx_config = f"""
-server {{
-    listen 80;
-    server_name _;
+            # 生成Nginx配置
+            listen_directive = f"listen {nginx_port} ssl;" if enable_ssl else f"listen {nginx_port};"
+
+            # 基础Nginx配置
+            nginx_config = f"""server {{
+    {listen_directive}
+    server_name {server_name};
 
     root {remote_project_path}/dist;
     index index.html;
 
-    location / {{
-        try_files $uri $uri/ /index.html;
-    }}
-
+    # 静态资源缓存
     location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {{
         expires 1y;
         add_header Cache-Control "public, immutable";
     }}
-}}
+
+    # Vue Router history模式支持
+    location / {{
+        try_files $uri $uri/ /index.html;
+    }}
 """
+
+            # 添加代理配置
+            if proxy_configs:
+                nginx_config += "\n    # API代理配置\n"
+                for proxy in proxy_configs:
+                    path = proxy.get("path", "/api")
+                    target = proxy.get("target", "http://127.0.0.1:8080")
+
+                    nginx_config += f"""
+    location {path} {{
+        proxy_pass {target};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }}
+"""
+
+            nginx_config += "}\n"
+
             nginx_conf_path = f"/etc/nginx/sites-available/{project_name}"
             nginx_enabled_path = f"/etc/nginx/sites-enabled/{project_name}"
 

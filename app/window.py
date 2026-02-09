@@ -21,7 +21,7 @@ from PySide6.QtGui import QFont
 
 from .uploader import ProjectUploader
 from .server_config import ServerConfig, ServerConfigManager
-from .dialogs import ServerManagerDialog, MySQLInstallDialog
+from .dialogs import ServerManagerDialog, MySQLInstallDialog, VueDeployDialog
 from .threads import UploadThread, VueDeployThread, SpringBootDeployThread, FlaskDeployThread, DjangoDeployThread, ExpressDeployThread, InstallThread
 from .server_types import SoftwareType
 
@@ -489,45 +489,74 @@ class DeployUploadWindow(QMainWindow):
             return
 
         host, username, password, port = config
-        project_root = self.project_input.text().strip()
 
-        if not project_root or not Path(project_root).exists():
-            QMessageBox.warning(self, "提示", "请选择有效的Vue项目目录")
-            return
+        # 显示Vue部署配置对话框（用户在对话框中选择项目）
+        dialog = VueDeployDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            vue_config = dialog.get_config()
 
-        # 确认对话框
-        reply = QMessageBox.question(
-            self,
-            "确认部署",
-            f"确定要部署Vue项目到服务器 {host} 吗？\n\n"
-            f"项目目录: {project_root}\n\n"
-            "该操作将：\n"
-            "1. 上传项目文件\n"
-            "2. 安装npm依赖\n"
-            "3. 执行npm run build\n"
-            "4. 配置Nginx",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
+            # 验证项目路径
+            project_root = vue_config.get("project_root", "").strip()
+            if not project_root or not Path(project_root).exists():
+                QMessageBox.warning(self, "提示", "请选择有效的Vue项目目录")
+                return
 
-        if reply == QMessageBox.StandardButton.Yes:
-            # 清空日志
-            self.log_output.clear()
+            # 验证Vue项目
+            package_json = Path(project_root) / "package.json"
+            vite_config = Path(project_root) / "vite.config.js"
+            vue_config_file = Path(project_root) / "vue.config.js"
 
-            # 禁用按钮
-            self.set_inputs_enabled(False)
+            if not package_json.exists() and not vite_config.exists() and not vue_config_file.exists():
+                QMessageBox.warning(
+                    self,
+                    "提示",
+                    "不是有效的Vue项目\n\n项目目录必须包含package.json、vite.config.js或vue.config.js文件"
+                )
+                return
 
-            # 创建上传器
-            self.uploader = ProjectUploader(host, username, password, port)
+            # 确认对话框
+            proxy_info = ""
+            if vue_config.get("proxy_configs"):
+                proxy_count = len(vue_config["proxy_configs"])
+                proxy_info = f"\n• 检测到 {proxy_count} 个API代理配置"
 
-            # 在后台线程执行
-            self.deploy_thread = VueDeployThread(self.uploader, project_root)
-            self.deploy_thread.log.connect(self.append_log)
-            self.deploy_thread.progress.connect(self.update_progress)
-            self.deploy_thread.finished.connect(self.vue_deploy_finished)
-            self.deploy_thread.error.connect(self.upload_error)
-            self.deploy_thread.start()
+            reply = QMessageBox.question(
+                self,
+                "确认部署",
+                f"确定要部署Vue项目到服务器 {host} 吗？\n\n"
+                f"项目目录: {project_root}\n"
+                f"远程目录: {vue_config['remote_dir']}\n"
+                f"构建命令: {vue_config['build_command']}\n"
+                f"Nginx端口: {vue_config['nginx_port']}\n"
+                f"服务器名称: {vue_config['server_name']}"
+                f"{proxy_info}\n\n"
+                "该操作将：\n"
+                "1. 上传项目文件\n"
+                "2. 安装Node.js依赖\n"
+                "3. 执行构建命令\n"
+                "4. 配置Nginx（包含代理规则）",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
 
-            self.statusBar().showMessage("正在部署Vue项目...")
+            if reply == QMessageBox.StandardButton.Yes:
+                # 清空日志
+                self.log_output.clear()
+
+                # 禁用按钮
+                self.set_inputs_enabled(False)
+
+                # 创建上传器
+                self.uploader = ProjectUploader(host, username, password, port)
+
+                # 在后台线程执行
+                self.deploy_thread = VueDeployThread(self.uploader, vue_config)
+                self.deploy_thread.log.connect(self.append_log)
+                self.deploy_thread.progress.connect(self.update_progress)
+                self.deploy_thread.finished.connect(self.vue_deploy_finished)
+                self.deploy_thread.error.connect(self.upload_error)
+                self.deploy_thread.start()
+
+                self.statusBar().showMessage("正在部署Vue项目...")
 
     def deploy_springboot_project(self):
         """SpringBoot项目一键部署"""

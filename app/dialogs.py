@@ -7,12 +7,14 @@
 """
 
 from typing import Optional, List
+from pathlib import Path
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QTableWidget, QTableWidgetItem,
     QHeaderView, QAbstractItemView, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QMessageBox, QSpinBox, QComboBox
+    QLabel, QLineEdit, QPushButton, QMessageBox, QSpinBox, QComboBox,
+    QFileDialog, QGroupBox
 )
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Signal, Qt
 from .server_config import ServerConfig
 from .server_types import ServerType, get_supported_software
 
@@ -416,3 +418,314 @@ class MySQLInstallDialog(QDialog):
     def get_password(self) -> str:
         """获取密码"""
         return self.password_input.text()
+
+
+class VueDeployDialog(QDialog):
+    """Vue项目部署配置对话框"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.project_root = ""
+        self.proxy_configs = []
+        self.setWindowTitle("Vue项目部署配置")
+        self.setMinimumWidth(700)
+        self.setMinimumHeight(600)
+        self.init_ui()
+
+    def init_ui(self):
+        """初始化UI"""
+        from pathlib import Path
+        from PySide6.QtWidgets import QFileDialog, QGroupBox
+
+        layout = QVBoxLayout()
+        layout.setSpacing(15)
+
+        # 标题说明
+        title_label = QLabel("配置Vue项目部署参数")
+        title_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #333;")
+        layout.addWidget(title_label)
+
+        # 项目配置组
+        project_group = QGroupBox("项目配置")
+        project_layout = QVBoxLayout()
+        project_layout.setSpacing(10)
+
+        # 本地项目目录
+        root_layout = QHBoxLayout()
+        root_label = QLabel("本地项目目录:")
+        root_label.setMinimumWidth(100)
+        self.root_input = QLineEdit()
+        self.root_input.setPlaceholderText("选择本地Vue项目目录")
+        browse_btn = QPushButton("选择目录")
+        browse_btn.setMaximumWidth(100)
+        browse_btn.clicked.connect(self.browse_project)
+        root_layout.addWidget(root_label)
+        root_layout.addWidget(self.root_input)
+        root_layout.addWidget(browse_btn)
+        project_layout.addLayout(root_layout)
+
+        # 远程部署目录
+        remote_layout = QHBoxLayout()
+        remote_label = QLabel("远程部署目录:")
+        remote_label.setMinimumWidth(100)
+        self.remote_input = QLineEdit()
+        self.remote_input.setPlaceholderText("例如: /var/www/vue-apps")
+        self.remote_input.setText("/var/www/vue-apps")
+        remote_layout.addWidget(remote_label)
+        remote_layout.addWidget(self.remote_input)
+        project_layout.addLayout(remote_layout)
+
+        # 构建命令
+        build_layout = QHBoxLayout()
+        build_label = QLabel("构建命令:")
+        build_label.setMinimumWidth(100)
+        self.build_input = QLineEdit()
+        self.build_input.setText("npm run build")
+        self.build_input.setPlaceholderText("例如: npm run build 或 pnpm build")
+        build_layout.addWidget(build_label)
+        build_layout.addWidget(self.build_input)
+        project_layout.addLayout(build_layout)
+
+        project_group.setLayout(project_layout)
+        layout.addWidget(project_group)
+
+        # Nginx配置组
+        nginx_group = QGroupBox("Nginx配置")
+        nginx_layout = QVBoxLayout()
+        nginx_layout.setSpacing(10)
+
+        # 第一行：端口和服务器名称
+        row1_layout = QHBoxLayout()
+
+        port_layout = QHBoxLayout()
+        port_label = QLabel("监听端口:")
+        port_label.setMinimumWidth(80)
+        self.port_input = QSpinBox()
+        self.port_input.setRange(1, 65535)
+        self.port_input.setValue(80)
+        port_layout.addWidget(port_label)
+        port_layout.addWidget(self.port_input)
+        port_layout.addStretch()
+        row1_layout.addLayout(port_layout)
+
+        server_name_layout = QHBoxLayout()
+        server_name_label = QLabel("服务器名称:")
+        server_name_label.setMinimumWidth(80)
+        self.server_name_input = QLineEdit()
+        self.server_name_input.setPlaceholderText("例如: example.com 或 _")
+        self.server_name_input.setText("_")
+        server_name_layout.addWidget(server_name_label)
+        server_name_layout.addWidget(self.server_name_input)
+        row1_layout.addLayout(server_name_layout)
+
+        nginx_layout.addLayout(row1_layout)
+
+        # SSL配置
+        ssl_layout = QHBoxLayout()
+        self.ssl_checkbox = QPushButton("启用HTTPS (SSL)")
+        self.ssl_checkbox.setCheckable(True)
+        self.ssl_checkbox.setChecked(False)
+        ssl_layout.addWidget(self.ssl_checkbox)
+        ssl_layout.addStretch()
+        nginx_layout.addLayout(ssl_layout)
+
+        nginx_group.setLayout(nginx_layout)
+        layout.addWidget(nginx_group)
+
+        # API代理配置组
+        proxy_group = QGroupBox("API代理配置")
+        proxy_layout = QVBoxLayout()
+        proxy_layout.setSpacing(10)
+
+        # 说明标签
+        proxy_info = QLabel("配置前端路径到后端API的代理转发（将从vite.config.js自动读取）:")
+        proxy_info.setStyleSheet("color: #666; font-size: 11px;")
+        proxy_info.setWordWrap(True)
+        proxy_layout.addWidget(proxy_info)
+
+        # 代理列表
+        self.proxy_table = QTableWidget()
+        self.proxy_table.setColumnCount(4)
+        self.proxy_table.setHorizontalHeaderLabels(["前端路径", "后端地址", "说明", "操作"])
+        self.proxy_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.proxy_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.proxy_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.proxy_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.proxy_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.proxy_table.setMaximumHeight(150)
+        self.proxy_table.setAlternatingRowColors(True)
+        proxy_layout.addWidget(self.proxy_table)
+
+        # 添加/清除代理按钮
+        proxy_btn_layout = QHBoxLayout()
+        add_proxy_btn = QPushButton("添加代理规则")
+        add_proxy_btn.clicked.connect(lambda: self.add_proxy_row())
+        clear_proxy_btn = QPushButton("清空代理")
+        clear_proxy_btn.clicked.connect(self.clear_proxy_rows)
+        proxy_btn_layout.addWidget(add_proxy_btn)
+        proxy_btn_layout.addWidget(clear_proxy_btn)
+        proxy_btn_layout.addStretch()
+        proxy_layout.addLayout(proxy_btn_layout)
+
+        proxy_group.setLayout(proxy_layout)
+        layout.addWidget(proxy_group)
+
+        # 部署选项组
+        options_group = QGroupBox("部署选项")
+        options_layout = QVBoxLayout()
+        options_layout.setSpacing(8)
+
+        self.auto_install_checkbox = QPushButton("自动安装Node.js和npm (如果未安装)")
+        self.auto_install_checkbox.setCheckable(True)
+        self.auto_install_checkbox.setChecked(True)
+        options_layout.addWidget(self.auto_install_checkbox)
+
+        self.clean_build_checkbox = QPushButton("清理并重新构建 (rm -rf node_modules && npm install)")
+        self.clean_build_checkbox.setCheckable(True)
+        self.clean_build_checkbox.setChecked(False)
+        options_layout.addWidget(self.clean_build_checkbox)
+
+        options_group.setLayout(options_layout)
+        layout.addWidget(options_group)
+
+        # 按钮
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept_dialog)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        layout.addStretch()
+        self.setLayout(layout)
+
+    def load_vite_config(self):
+        """读取vite.config.js配置"""
+        import json
+        import re
+
+        vite_config_path = None
+        for config_name in ["vite.config.js", "vite.config.ts"]:
+            test_path = Path(self.project_root) / config_name
+            if test_path.exists():
+                vite_config_path = test_path
+                break
+
+        if not vite_config_path or not vite_config_path.exists():
+            return
+
+        try:
+            content = vite_config_path.read_text(encoding='utf-8')
+
+            # 解析server.proxy配置
+            proxy_pattern = r"proxy\s*:\s*\{([^}]+)\}"
+            proxy_match = re.search(proxy_pattern, content, re.DOTALL)
+
+            if proxy_match:
+                proxy_block = proxy_match.group(1)
+
+                # 查找所有代理规则
+                rule_pattern = r"['\"]([^'\"]+)['\"]\s*:\s*\{([^}]+)\}"
+                rules = re.findall(rule_pattern, proxy_block, re.DOTALL)
+
+                for path, rule_config in rules:
+                    # 提取target
+                    target_match = re.search(r"target\s*:\s*['\"]([^'\"]+)['\"]", rule_config)
+                    if target_match:
+                        target = target_match.group(1)
+                        self.add_proxy_row(path, target, "从vite.config.js读取")
+
+        except Exception as e:
+            print(f"读取vite配置失败: {e}")
+
+    def browse_project(self):
+        """浏览项目目录"""
+        from pathlib import Path
+        directory = QFileDialog.getExistingDirectory(self, "选择Vue项目目录")
+        if directory:
+            self.root_input.setText(directory)
+            self.project_root = directory
+            # 清空代理表并重新加载vite配置
+            self.proxy_table.setRowCount(0)
+            self.load_vite_config()
+
+    def add_proxy_row(self, path: str = "", target: str = "", desc: str = "", editable: bool = True):
+        """添加代理行"""
+        row = self.proxy_table.rowCount()
+        self.proxy_table.insertRow(row)
+
+        # 路径列
+        path_item = QTableWidgetItem(path or "/api")
+        if editable:
+            path_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEditable)
+        else:
+            path_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            path_item.setBackground(Qt.GlobalColor.gray.lighter(130))
+        self.proxy_table.setItem(row, 0, path_item)
+
+        # 目标列
+        target_item = QTableWidgetItem(target or "http://127.0.0.1:8080")
+        if editable:
+            target_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEditable)
+        else:
+            target_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            target_item.setBackground(Qt.GlobalColor.gray.lighter(130))
+        self.proxy_table.setItem(row, 1, target_item)
+
+        # 说明列
+        desc_item = QTableWidgetItem(desc)
+        desc_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        self.proxy_table.setItem(row, 2, desc_item)
+
+        # 删除按钮
+        delete_btn = QPushButton("删除")
+        delete_btn.setMaximumWidth(60)
+        delete_btn.clicked.connect(lambda checked, r=row: self.delete_proxy_row(r))
+        self.proxy_table.setCellWidget(row, 3, delete_btn)
+
+    def clear_proxy_rows(self):
+        """清空代理行"""
+        self.proxy_table.setRowCount(0)
+
+    def delete_proxy_row(self, row: int):
+        """删除代理行"""
+        self.proxy_table.removeRow(row)
+
+    def accept_dialog(self):
+        """确认对话框"""
+        remote_dir = self.remote_input.text().strip()
+        if not remote_dir:
+            QMessageBox.warning(self, "提示", "请输入远程部署目录")
+            return
+
+        build_cmd = self.build_input.text().strip()
+        if not build_cmd:
+            QMessageBox.warning(self, "提示", "请输入构建命令")
+            return
+
+        self.accept()
+
+    def get_config(self) -> dict:
+        """获取配置"""
+        # 收集代理配置
+        proxy_configs = []
+        for row in range(self.proxy_table.rowCount()):
+            path_item = self.proxy_table.item(row, 0)
+            target_item = self.proxy_table.item(row, 1)
+            if path_item and target_item:
+                proxy_configs.append({
+                    "path": path_item.text().strip(),
+                    "target": target_item.text().strip()
+                })
+
+        return {
+            "project_root": self.root_input.text().strip(),
+            "remote_dir": self.remote_input.text().strip(),
+            "build_command": self.build_input.text().strip(),
+            "nginx_port": self.port_input.value(),
+            "server_name": self.server_name_input.text().strip(),
+            "enable_ssl": self.ssl_checkbox.isChecked(),
+            "proxy_configs": proxy_configs,
+            "auto_install": self.auto_install_checkbox.isChecked(),
+            "clean_build": self.clean_build_checkbox.isChecked()
+        }
