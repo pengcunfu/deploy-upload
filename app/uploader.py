@@ -1054,3 +1054,169 @@ sudo DEBIAN_FRONTEND=noninteractive apt install -y mysql-server"""
         except Exception as e:
             raise Exception(f"PHP安装失败: {str(e)}")
 
+    def deploy_springboot_project(self, project_root: str, remote_dir: Optional[str] = None,
+                                  progress_callback: Optional[Callable[[str, int, int], None]] = None) -> str:
+        """
+        部署SpringBoot项目到远程服务器
+        包括：打包项目、上传jar文件、创建systemd服务、启动应用
+
+        Args:
+            project_root (str): SpringBoot项目根目录
+            remote_dir (str, optional): 远程部署目录
+            progress_callback (Callable, optional): 进度回调函数
+
+        Returns:
+            str: 部署完成后的jar文件路径
+        """
+        project_root = Path(project_root).resolve()
+
+        if remote_dir is None:
+            remote_dir = f"/home/{self.username}/springboot-apps"
+
+        try:
+            # 1. 检查是否为Maven项目
+            pom_xml = project_root / "pom.xml"
+            if not pom_xml.exists():
+                raise Exception("不是有效的Maven项目，未找到pom.xml文件")
+
+            if progress_callback:
+                progress_callback("上传SpringBoot项目", 0, 100)
+
+            # 2. 上传项目文件
+            remote_project_path = self.upload_and_extract(
+                str(project_root),
+                remote_dir,
+                progress_callback=progress_callback
+            )
+
+            project_name = project_root.name
+
+            # 3. 安装Maven（如果未安装）
+            if progress_callback:
+                progress_callback("检查Maven环境", 0, 100)
+
+            check_maven_cmd = "command -v mvn"
+            exit_status, output, error = self.execute_remote_command(check_maven_cmd)
+
+            if exit_status != 0:
+                if progress_callback:
+                    progress_callback("安装Maven", 0, 100)
+
+                # 安装Maven
+                install_maven_cmd = "sudo DEBIAN_FRONTEND=noninteractive apt install -y maven"
+                exit_status, output, error = self.execute_remote_command(install_maven_cmd)
+
+                if exit_status != 0:
+                    raise Exception(f"Maven安装失败: {error}")
+
+            # 4. 打包项目
+            if progress_callback:
+                progress_callback("打包SpringBoot项目", 0, 100)
+
+            package_cmd = f"cd {remote_project_path} && mvn clean package -DskipTests"
+            exit_status, output, error = self.execute_remote_command(package_cmd)
+
+            if exit_status != 0:
+                # 尝试使用Gradle
+                build_gradle = project_root / "build.gradle"
+                if build_gradle.exists():
+                    if progress_callback:
+                        progress_callback("使用Gradle打包", 0, 100)
+
+                    # 检查Gradle
+                    check_gradle_cmd = "command -v gradle"
+                    exit_status, output, error = self.execute_remote_command(check_gradle_cmd)
+
+                    if exit_status != 0:
+                        # 安装Gradle
+                        install_gradle_cmd = "sudo DEBIAN_FRONTEND=noninteractive apt install -y gradle"
+                        exit_status, output, error = self.execute_remote_command(install_gradle_cmd)
+
+                    # 使用Gradle打包
+                    package_cmd = f"cd {remote_project_path} && gradle clean build -x test"
+                    exit_status, output, error = self.execute_remote_command(package_cmd)
+
+                    if exit_status != 0:
+                        raise Exception(f"Gradle打包失败: {error}")
+
+                    # Gradle构建的jar位置
+                    jar_file = f"{remote_project_path}/build/libs/*.jar"
+                else:
+                    raise Exception(f"Maven打包失败: {error}")
+            else:
+                # Maven构建的jar位置
+                jar_file = f"{remote_project_path}/target/*.jar"
+
+            if progress_callback:
+                progress_callback("打包SpringBoot项目", 100, 100)
+
+            # 5. 创建部署目录
+            if progress_callback:
+                progress_callback("创建部署目录", 0, 100)
+
+            deploy_dir = f"/opt/{project_name}"
+            mkdir_cmd = f"sudo mkdir -p {deploy_dir}"
+            self.execute_remote_command(mkdir_cmd)
+
+            # 6. 移动jar文件到部署目录
+            if progress_callback:
+                progress_callback("部署jar文件", 0, 100)
+
+            move_cmd = f"sudo mv {jar_file} {deploy_dir}/{project_name}.jar"
+            exit_status, output, error = self.execute_remote_command(move_cmd)
+
+            if exit_status != 0:
+                raise Exception(f"移动jar文件失败: {error}")
+
+            # 7. 创建systemd服务文件
+            if progress_callback:
+                progress_callback("创建systemd服务", 0, 100)
+
+            service_content = f"""[Unit]
+Description=Spring Boot Application - {project_name}
+After=syslog.target network.target
+
+[Service]
+User={self.username}
+ExecStart=/usr/bin/java -jar {deploy_dir}/{project_name}.jar
+SuccessExitStatus=143
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+            service_file = f"/etc/systemd/system/{project_name}.service"
+            write_service_cmd = f"echo '{service_content}' | sudo tee {service_file}"
+            self.execute_remote_command(write_service_cmd)
+
+            # 8. 重载systemd并启动服务
+            if progress_callback:
+                progress_callback("启动应用服务", 0, 100)
+
+            reload_cmd = "sudo systemctl daemon-reload"
+            self.execute_remote_command(reload_cmd)
+
+            start_cmd = f"sudo systemctl start {project_name}"
+            exit_status, output, error = self.execute_remote_command(start_cmd)
+
+            if exit_status != 0:
+                raise Exception(f"启动服务失败: {error}")
+
+            enable_cmd = f"sudo systemctl enable {project_name}"
+            self.execute_remote_command(enable_cmd)
+
+            # 9. 检查服务状态
+            status_cmd = f"sudo systemctl is-active {project_name}"
+            exit_status, output, error = self.execute_remote_command(status_cmd)
+
+            if progress_callback:
+                progress_callback("启动应用服务", 100, 100)
+
+            # 返回部署信息
+            return f"{deploy_dir}/{project_name}.jar"
+
+        except Exception as e:
+            raise Exception(f"SpringBoot项目部署失败: {str(e)}")
+

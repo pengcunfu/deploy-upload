@@ -108,6 +108,45 @@ class VueDeployThread(QThread):
             self.error.emit(error_msg)
 
 
+class SpringBootDeployThread(QThread):
+    """SpringBoot部署线程"""
+
+    log = Signal(str)
+    progress = Signal(str, int, int)
+    finished = Signal(bool, str)
+    error = Signal(str)
+
+    def __init__(self, uploader: ProjectUploader, project_root: str):
+        super().__init__()
+        self.uploader = uploader
+        self.project_root = project_root
+
+    def run(self):
+        """执行SpringBoot部署"""
+        try:
+            self.log.emit("开始部署SpringBoot项目...")
+
+            def progress_callback(stage, current, total):
+                self.progress.emit(stage, current, total)
+                if total > 0 and current == total:
+                    self.log.emit(f"✓ {stage} 完成")
+                else:
+                    self.log.emit(f"{stage}...")
+
+            remote_path = self.uploader.deploy_springboot_project(
+                self.project_root,
+                progress_callback=progress_callback
+            )
+
+            self.log.emit("✓ SpringBoot项目部署完成")
+            self.finished.emit(True, remote_path)
+
+        except Exception as e:
+            error_msg = str(e)
+            self.log.emit(f"✗ 部署失败: {error_msg}")
+            self.error.emit(error_msg)
+
+
 class InstallThread(QThread):
     """环境安装线程"""
 

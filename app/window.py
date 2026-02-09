@@ -22,7 +22,7 @@ from PySide6.QtGui import QFont
 from .uploader import ProjectUploader
 from .server_config import ServerConfig, ServerConfigManager
 from .dialogs import ServerManagerDialog, MySQLInstallDialog
-from .threads import UploadThread, VueDeployThread, InstallThread
+from .threads import UploadThread, VueDeployThread, SpringBootDeployThread, InstallThread
 from .server_types import SoftwareType
 
 
@@ -293,6 +293,9 @@ class DeployUploadWindow(QMainWindow):
         vue_deploy_action = deploy_menu.addAction("Vue项目一键部署(&V)")
         vue_deploy_action.triggered.connect(self.deploy_vue_project)
 
+        springboot_deploy_action = deploy_menu.addAction("SpringBoot项目一键部署(&S)")
+        springboot_deploy_action.triggered.connect(self.deploy_springboot_project)
+
         deploy_menu.addSeparator()
 
         # 软件安装菜单
@@ -516,6 +519,84 @@ class DeployUploadWindow(QMainWindow):
             self.deploy_thread.start()
 
             self.statusBar().showMessage("正在部署Vue项目...")
+
+    def deploy_springboot_project(self):
+        """SpringBoot项目一键部署"""
+        config = self.get_server_config()
+        if not config:
+            return
+
+        host, username, password, port = config
+        project_root = self.project_input.text().strip()
+
+        if not project_root or not Path(project_root).exists():
+            QMessageBox.warning(self, "提示", "请选择有效的SpringBoot项目目录")
+            return
+
+        # 检查是否为有效的Maven/Gradle项目
+        pom_xml = Path(project_root) / "pom.xml"
+        build_gradle = Path(project_root) / "build.gradle"
+
+        if not pom_xml.exists() and not build_gradle.exists():
+            QMessageBox.warning(
+                self,
+                "提示",
+                "不是有效的SpringBoot项目\n\n项目目录必须包含 pom.xml (Maven) 或 build.gradle (Gradle) 文件"
+            )
+            return
+
+        # 确认对话框
+        reply = QMessageBox.question(
+            self,
+            "确认部署",
+            f"确定要部署SpringBoot项目到服务器 {host} 吗？\n\n"
+            f"项目目录: {project_root}\n\n"
+            "该操作将：\n"
+            "1. 上传项目文件\n"
+            "2. 安装Maven/Gradle（如果需要）\n"
+            "3. 执行打包命令\n"
+            "4. 创建systemd服务\n"
+            "5. 启动应用服务",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            # 清空日志
+            self.log_output.clear()
+
+            # 禁用按钮
+            self.set_inputs_enabled(False)
+
+            # 创建上传器
+            self.uploader = ProjectUploader(host, username, password, port)
+
+            # 在后台线程执行
+            self.deploy_thread = SpringBootDeployThread(self.uploader, project_root)
+            self.deploy_thread.log.connect(self.append_log)
+            self.deploy_thread.progress.connect(self.update_progress)
+            self.deploy_thread.finished.connect(self.springboot_deploy_finished)
+            self.deploy_thread.error.connect(self.upload_error)
+            self.deploy_thread.start()
+
+            self.statusBar().showMessage("正在部署SpringBoot项目...")
+
+    def springboot_deploy_finished(self, success: bool, message: str):
+        """SpringBoot部署完成"""
+        self.set_inputs_enabled(True)
+        self.statusBar().showMessage("部署完成")
+
+        if success:
+            QMessageBox.information(
+                self,
+                "部署成功",
+                f"SpringBoot项目部署成功！\n\n部署路径: {message}\n\n"
+                "应用已作为系统服务启动，可以使用以下命令管理：\n"
+                f"sudo systemctl status <项目名>\n"
+                f"sudo systemctl restart <项目名>\n"
+                f"sudo systemctl stop <项目名>"
+            )
+        else:
+            QMessageBox.critical(self, "部署失败", message)
 
     def install_mysql(self):
         """安装MySQL"""
