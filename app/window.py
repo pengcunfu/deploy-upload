@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGroupBox, QLineEdit, QPushButton, QLabel, QTextEdit,
     QProgressBar, QFileDialog, QMessageBox, QStyleFactory,
-    QMenuBar, QMenu
+    QMenuBar, QMenu, QDialog
 )
 from PySide6.QtCore import QThread, Signal, Slot
 from PySide6.QtGui import QFont
@@ -314,6 +314,8 @@ class DeployUploadWindow(QMainWindow):
             if self.servers:
                 # 有服务器配置，显示选择对话框
                 dialog = ServerManagerDialog(self, self.servers.copy(), select_mode=True)
+                # 连接信号，自动保存服务器配置
+                dialog.servers_updated.connect(lambda servers: self._save_servers_from_dialog(servers))
                 if dialog.exec() == QDialog.DialogCode.Accepted:
                     # 保存可能更新的服务器列表
                     self.servers = dialog.get_servers()
@@ -325,38 +327,40 @@ class DeployUploadWindow(QMainWindow):
                         self.current_server = selected
                         self.update_server_display()
                         self.statusBar().showMessage(f"已连接到服务器: {selected.name}")
-                else:
-                    # 用户取消选择，关闭主窗口
-                    self.close()
+                # 用户取消选择，不关闭主窗口，保持未连接状态
             else:
                 # 没有服务器配置，提示用户添加
-                QMessageBox.information(
+                reply = QMessageBox.question(
                     self,
                     "欢迎使用 DeployUpload",
-                    "还没有配置任何服务器。\n\n请先添加服务器配置。"
+                    "还没有配置任何服务器。\n\n是否现在添加服务器配置？",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
                 )
-                dialog = ServerManagerDialog(self, [], select_mode=False)
-                dialog.exec()
 
-                # 重新加载服务器配置
-                self.servers = ServerConfigManager.load_servers()
-                if self.servers:
-                    # 再次显示选择对话框
-                    select_dialog = ServerManagerDialog(self, self.servers.copy(), select_mode=True)
-                    if select_dialog.exec() == QDialog.DialogCode.Accepted:
-                        self.servers = select_dialog.get_servers()
+                if reply == QMessageBox.StandardButton.Yes:
+                    dialog = ServerManagerDialog(self, [], select_mode=False)
+                    # 连接信号，自动保存服务器配置
+                    dialog.servers_updated.connect(lambda servers: self._save_servers_from_dialog(servers))
+                    if dialog.exec() == QDialog.DialogCode.Accepted:
+                        # 保存服务器配置
+                        self.servers = dialog.get_servers()
                         ServerConfigManager.save_servers(self.servers)
 
-                        selected = select_dialog.get_selected_server()
-                        if selected:
-                            self.current_server = selected
-                            self.update_server_display()
-                            self.statusBar().showMessage(f"已连接到服务器: {selected.name}")
-                    else:
-                        self.close()
-                else:
-                    # 用户没有添加服务器，关闭主窗口
-                    self.close()
+                        # 如果添加了服务器，再次显示选择对话框
+                        if self.servers:
+                            select_dialog = ServerManagerDialog(self, self.servers.copy(), select_mode=True)
+                            # 连接信号，自动保存服务器配置
+                            select_dialog.servers_updated.connect(lambda servers: self._save_servers_from_dialog(servers))
+                            if select_dialog.exec() == QDialog.DialogCode.Accepted:
+                                self.servers = select_dialog.get_servers()
+                                ServerConfigManager.save_servers(self.servers)
+
+                                selected = select_dialog.get_selected_server()
+                                if selected:
+                                    self.current_server = selected
+                                    self.update_server_display()
+                                    self.statusBar().showMessage(f"已连接到服务器: {selected.name}")
+                # 无论是否添加服务器，都不关闭主窗口
 
     def save_servers_config(self):
         """保存服务器配置"""
@@ -364,6 +368,11 @@ class DeployUploadWindow(QMainWindow):
             ServerConfigManager.save_servers(self.servers)
         except Exception as e:
             QMessageBox.critical(self, "错误", f"保存服务器配置失败:\n{str(e)}")
+
+    def _save_servers_from_dialog(self, servers: List[ServerConfig]):
+        """从对话框保存服务器配置"""
+        self.servers = servers
+        self.save_servers_config()
 
     def update_server_display(self):
         """更新服务器信息显示"""
@@ -383,6 +392,8 @@ class DeployUploadWindow(QMainWindow):
     def switch_server(self):
         """切换服务器"""
         dialog = ServerManagerDialog(self, self.servers.copy(), select_mode=True)
+        # 连接信号，自动保存服务器配置
+        dialog.servers_updated.connect(lambda servers: self._save_servers_from_dialog(servers))
         if dialog.exec() == QDialog.DialogCode.Accepted:
             # 保存更新后的服务器列表
             self.servers = dialog.get_servers()
@@ -398,6 +409,8 @@ class DeployUploadWindow(QMainWindow):
     def manage_servers(self):
         """打开服务器管理对话框"""
         dialog = ServerManagerDialog(self, self.servers.copy(), select_mode=False)
+        # 连接信号，自动保存服务器配置
+        dialog.servers_updated.connect(lambda servers: self._save_servers_from_dialog(servers))
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.servers = dialog.get_servers()
             self.save_servers_config()

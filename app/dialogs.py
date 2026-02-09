@@ -143,6 +143,13 @@ class ServerManagerDialog(QDialog):
         self.setMinimumSize(750, 500)
         self.init_ui()
 
+    def done(self, result: int):
+        """对话框关闭时自动保存配置"""
+        if result == QDialog.DialogCode.Accepted:
+            # 对话框被接受时，发出更新信号
+            self.servers_updated.emit(self.servers)
+        super().done(result)
+
     def init_ui(self):
         """初始化UI"""
         layout = QVBoxLayout()
