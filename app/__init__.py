@@ -10,6 +10,6 @@ __version__ = '1.0.0'
 __author__ = 'DeployUpload'
 
 from .uploader import ProjectUploader
-from .gui import DeployUploadWindow
+from .window import DeployUploadWindow
 
 __all__ = ['ProjectUploader', 'DeployUploadWindow']

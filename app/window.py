@@ -1,90 +1,40 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-DeployUpload GUI - 图形界面
+主窗口模块
 
-使用PySide6实现的Windows Vista风格图形界面
+包含 DeployUpload 主窗口类
 """
 
-import sys
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
+
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGroupBox, QLineEdit, QPushButton, QLabel, QTextEdit,
-    QProgressBar, QFileDialog, QSpinBox, QMessageBox, QStyleFactory,
-    QMenuBar, QMenu, QDialog, QDialogButtonBox
+    QProgressBar, QFileDialog, QMessageBox, QStyleFactory,
+    QMenuBar, QMenu
 )
 from PySide6.QtCore import QThread, Signal, Slot
 from PySide6.QtGui import QFont
+
 from .uploader import ProjectUploader
-
-
-class UploadThread(QThread):
-    """上传工作线程"""
-
-    # 定义信号
-    progress = Signal(str, int, int)  # 阶段, 当前进度, 总进度
-    log = Signal(str)  # 日志消息
-    finished = Signal(bool, str)  # 完成, 消息
-    error = Signal(str)  # 错误消息
-
-    def __init__(self, uploader: ProjectUploader, project_root: str, remote_dir: Optional[str] = None):
-        super().__init__()
-        self.uploader = uploader
-        self.project_root = project_root
-        self.remote_dir = remote_dir
-        self._is_running = True
-
-    def run(self):
-        """执行上传任务"""
-        try:
-            self.log.emit("开始上传任务...")
-            self.log.emit(f"项目根目录: {self.project_root}")
-
-            # 测试连接
-            self.log.emit("正在测试服务器连接...")
-            if not self.uploader.test_connection():
-                self.error.emit("服务器连接失败，请检查服务器信息")
-                return
-            self.log.emit("✓ 服务器连接成功")
-
-            # 上传项目
-            self.log.emit("开始打包并上传项目...")
-
-            def progress_callback(stage: str, current: int, total: int):
-                """进度回调函数"""
-                self.progress.emit(stage, current, total)
-                if total > 0 and current == total:
-                    self.log.emit(f"✓ {stage} 完成")
-
-            remote_path = self.uploader.upload_and_extract(
-                self.project_root,
-                self.remote_dir,
-                progress_callback=progress_callback
-            )
-
-            self.log.emit(f"✓ 项目上传完成")
-            self.log.emit(f"远程项目路径: {remote_path}")
-            self.finished.emit(True, remote_path)
-
-        except Exception as e:
-            self.error.emit(f"上传失败: {str(e)}")
-
-    def stop(self):
-        """停止上传"""
-        self._is_running = False
-        self.quit()
+from .server_config import ServerConfig, ServerConfigManager
+from .dialogs import ServerManagerDialog, MySQLInstallDialog
+from .threads import UploadThread, VueDeployThread, InstallThread
 
 
 class DeployUploadWindow(QMainWindow):
     """DeployUpload 主窗口"""
 
-    def __init__(self):
+    def __init__(self, server: Optional[ServerConfig] = None):
         super().__init__()
         self.uploader: Optional[ProjectUploader] = None
         self.upload_thread: Optional[UploadThread] = None
+        self.servers: List[ServerConfig] = []
+        self.current_server: Optional[ServerConfig] = server  # 当前连接的服务器
+        self.load_servers_config()
         self.init_ui()
 
     def init_ui(self):
@@ -111,55 +61,69 @@ class DeployUploadWindow(QMainWindow):
         main_layout.addWidget(self.create_log_group())
         main_layout.addWidget(self.create_button_group())
 
+        # 更新当前服务器信息显示
+        self.update_server_display()
+
         # 设置状态栏
         self.statusBar().showMessage("就绪")
 
     def create_server_config_group(self) -> QGroupBox:
         """创建服务器配置组"""
-        group = QGroupBox("服务器配置")
+        group = QGroupBox("当前服务器")
 
         layout = QVBoxLayout()
         layout.setSpacing(10)
+
+        # 服务器名称和切换按钮
+        server_info_layout = QHBoxLayout()
+        self.server_name_label = QLabel("未连接")
+        self.server_name_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #333;")
+        server_info_layout.addWidget(self.server_name_label)
+        server_info_layout.addStretch()
+
+        self.switch_server_btn = QPushButton("切换服务器")
+        self.switch_server_btn.setMaximumWidth(120)
+        self.switch_server_btn.clicked.connect(self.switch_server)
+        server_info_layout.addWidget(self.switch_server_btn)
+        layout.addLayout(server_info_layout)
+
+        # 服务器详细信息（只读）
+        info_grid = QVBoxLayout()
 
         # 主机地址
         host_layout = QHBoxLayout()
         host_label = QLabel("主机地址:")
         host_label.setMinimumWidth(80)
-        self.host_input = QLineEdit()
-        self.host_input.setPlaceholderText("例如: 192.168.1.100")
+        self.host_label = QLabel("-")
+        self.host_label.setStyleSheet("color: #666; padding: 2px 5px;")
         host_layout.addWidget(host_label)
-        host_layout.addWidget(self.host_input)
-        layout.addLayout(host_layout)
+        host_layout.addWidget(self.host_label)
+        host_layout.addStretch()
+        info_grid.addLayout(host_layout)
 
-        # 用户名和密码
-        auth_layout = QHBoxLayout()
+        # 用户名
+        username_layout = QHBoxLayout()
         username_label = QLabel("用户名:")
         username_label.setMinimumWidth(80)
-        self.username_input = QLineEdit()
-        self.username_input.setPlaceholderText("例如: ubuntu")
-        auth_layout.addWidget(username_label)
-        auth_layout.addWidget(self.username_input)
-
-        password_label = QLabel("密码:")
-        password_label.setMinimumWidth(60)
-        self.password_input = QLineEdit()
-        self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.password_input.setPlaceholderText("服务器登录密码")
-        auth_layout.addWidget(password_label)
-        auth_layout.addWidget(self.password_input)
-        layout.addLayout(auth_layout)
+        self.username_label = QLabel("-")
+        self.username_label.setStyleSheet("color: #666; padding: 2px 5px;")
+        username_layout.addWidget(username_label)
+        username_layout.addWidget(self.username_label)
+        username_layout.addStretch()
+        info_grid.addLayout(username_layout)
 
         # 端口
         port_layout = QHBoxLayout()
         port_label = QLabel("SSH端口:")
         port_label.setMinimumWidth(80)
-        self.port_input = QSpinBox()
-        self.port_input.setRange(1, 65535)
-        self.port_input.setValue(22)
+        self.port_label = QLabel("-")
+        self.port_label.setStyleSheet("color: #666; padding: 2px 5px;")
         port_layout.addWidget(port_label)
-        port_layout.addWidget(self.port_input)
+        port_layout.addWidget(self.port_label)
         port_layout.addStretch()
-        layout.addLayout(port_layout)
+        info_grid.addLayout(port_layout)
+
+        layout.addLayout(info_grid)
 
         # 测试连接按钮
         test_btn_layout = QHBoxLayout()
@@ -303,6 +267,14 @@ class DeployUploadWindow(QMainWindow):
         """创建菜单栏"""
         menubar = self.menuBar()
 
+        # 服务器菜单
+        server_menu = menubar.addMenu("服务器(&S)")
+
+        manage_servers_action = server_menu.addAction("服务器配置管理(&M)")
+        manage_servers_action.triggered.connect(self.manage_servers)
+
+        server_menu.addSeparator()
+
         # 部署菜单
         deploy_menu = menubar.addMenu("部署(&D)")
 
@@ -328,18 +300,128 @@ class DeployUploadWindow(QMainWindow):
         install_all_action = ubuntu_menu.addAction("一键安装全部(&A)")
         install_all_action.triggered.connect(self.install_all_environment)
 
-    def get_server_config(self) -> tuple:
-        """获取服务器配置"""
-        host = self.host_input.text().strip()
-        username = self.username_input.text().strip()
-        password = self.password_input.text()
-        port = self.port_input.value()
+    def load_servers_config(self):
+        """加载服务器配置"""
+        self.servers = ServerConfigManager.load_servers()
 
-        if not all([host, username, password]):
-            QMessageBox.warning(self, "提示", "请先配置服务器信息")
+    def select_server_on_startup(self):
+        """启动时选择服务器"""
+        # 如果没有当前服务器，显示选择对话框
+        if not self.current_server:
+            # 重新加载服务器配置（可能用户添加了新服务器）
+            self.servers = ServerConfigManager.load_servers()
+
+            if self.servers:
+                # 有服务器配置，显示选择对话框
+                dialog = ServerManagerDialog(self, self.servers.copy(), select_mode=True)
+                if dialog.exec() == QDialog.DialogCode.Accepted:
+                    # 保存可能更新的服务器列表
+                    self.servers = dialog.get_servers()
+                    ServerConfigManager.save_servers(self.servers)
+
+                    # 获取选中的服务器
+                    selected = dialog.get_selected_server()
+                    if selected:
+                        self.current_server = selected
+                        self.update_server_display()
+                        self.statusBar().showMessage(f"已连接到服务器: {selected.name}")
+                else:
+                    # 用户取消选择，关闭主窗口
+                    self.close()
+            else:
+                # 没有服务器配置，提示用户添加
+                QMessageBox.information(
+                    self,
+                    "欢迎使用 DeployUpload",
+                    "还没有配置任何服务器。\n\n请先添加服务器配置。"
+                )
+                dialog = ServerManagerDialog(self, [], select_mode=False)
+                dialog.exec()
+
+                # 重新加载服务器配置
+                self.servers = ServerConfigManager.load_servers()
+                if self.servers:
+                    # 再次显示选择对话框
+                    select_dialog = ServerManagerDialog(self, self.servers.copy(), select_mode=True)
+                    if select_dialog.exec() == QDialog.DialogCode.Accepted:
+                        self.servers = select_dialog.get_servers()
+                        ServerConfigManager.save_servers(self.servers)
+
+                        selected = select_dialog.get_selected_server()
+                        if selected:
+                            self.current_server = selected
+                            self.update_server_display()
+                            self.statusBar().showMessage(f"已连接到服务器: {selected.name}")
+                    else:
+                        self.close()
+                else:
+                    # 用户没有添加服务器，关闭主窗口
+                    self.close()
+
+    def save_servers_config(self):
+        """保存服务器配置"""
+        try:
+            ServerConfigManager.save_servers(self.servers)
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"保存服务器配置失败:\n{str(e)}")
+
+    def update_server_display(self):
+        """更新服务器信息显示"""
+        if self.current_server:
+            self.server_name_label.setText(f"🖥️ {self.current_server.name}")
+            self.host_label.setText(self.current_server.host)
+            self.username_label.setText(self.current_server.username)
+            self.port_label.setText(str(self.current_server.port))
+            self.switch_server_btn.setText("切换服务器")
+        else:
+            self.server_name_label.setText("未连接")
+            self.host_label.setText("-")
+            self.username_label.setText("-")
+            self.port_label.setText("-")
+            self.switch_server_btn.setText("选择服务器")
+
+    def switch_server(self):
+        """切换服务器"""
+        dialog = ServerManagerDialog(self, self.servers.copy(), select_mode=True)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            # 保存更新后的服务器列表
+            self.servers = dialog.get_servers()
+            self.save_servers_config()
+
+            # 获取选中的服务器
+            selected = dialog.get_selected_server()
+            if selected:
+                self.current_server = selected
+                self.update_server_display()
+                self.statusBar().showMessage(f"已切换到服务器: {selected.name}")
+
+    def manage_servers(self):
+        """打开服务器管理对话框"""
+        dialog = ServerManagerDialog(self, self.servers.copy(), select_mode=False)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.servers = dialog.get_servers()
+            self.save_servers_config()
+            # 如果当前服务器还在列表中，更新显示
+            if self.current_server:
+                for server in self.servers:
+                    if server.name == self.current_server.name:
+                        self.current_server = server
+                        self.update_server_display()
+                        break
+            QMessageBox.information(self, "成功", "服务器配置已保存")
+
+    def get_server_config(self) -> Optional[tuple]:
+        """获取当前服务器配置"""
+        if not self.current_server:
+            QMessageBox.warning(self, "提示", "请先选择一个服务器")
             return None
 
-        return host, username, password, port
+        return (
+            self.current_server.host,
+            self.current_server.username,
+            self.current_server.password,
+            self.current_server.port
+        )
 
     def deploy_vue_project(self):
         """Vue项目一键部署"""
@@ -557,14 +639,11 @@ class DeployUploadWindow(QMainWindow):
 
     def test_connection(self):
         """测试服务器连接"""
-        host = self.host_input.text().strip()
-        username = self.username_input.text().strip()
-        password = self.password_input.text()
-        port = self.port_input.value()
-
-        if not all([host, username, password]):
-            QMessageBox.warning(self, "提示", "请填写完整的服务器信息")
+        config = self.get_server_config()
+        if not config:
             return
+
+        host, username, password, port = config
 
         try:
             self.log_output.append("正在测试服务器连接...")
@@ -584,15 +663,16 @@ class DeployUploadWindow(QMainWindow):
     def start_upload(self):
         """开始上传"""
         # 验证输入
-        host = self.host_input.text().strip()
-        username = self.username_input.text().strip()
-        password = self.password_input.text()
-        port = self.port_input.value()
+        config = self.get_server_config()
+        if not config:
+            return
+
+        host, username, password, port = config
         project_root = self.project_input.text().strip()
         remote_dir = self.remote_input.text().strip() or None
 
-        if not all([host, username, password, project_root]):
-            QMessageBox.warning(self, "提示", "请填写完整的服务器信息和项目目录")
+        if not project_root:
+            QMessageBox.warning(self, "提示", "请选择项目目录")
             return
 
         if not Path(project_root).exists():
@@ -691,206 +771,8 @@ class DeployUploadWindow(QMainWindow):
 
     def set_inputs_enabled(self, enabled: bool):
         """设置输入控件是否可用"""
-        self.host_input.setEnabled(enabled)
-        self.username_input.setEnabled(enabled)
-        self.password_input.setEnabled(enabled)
-        self.port_input.setEnabled(enabled)
         self.project_input.setEnabled(enabled)
         self.browse_btn.setEnabled(enabled)
         self.remote_input.setEnabled(enabled)
+        self.switch_server_btn.setEnabled(enabled)
         self.test_connection_btn.setEnabled(enabled)
-
-
-class VueDeployThread(QThread):
-    """Vue部署线程"""
-
-    log = Signal(str)
-    progress = Signal(str, int, int)
-    finished = Signal(bool, str)
-    error = Signal(str)
-
-    def __init__(self, uploader: ProjectUploader, project_root: str):
-        super().__init__()
-        self.uploader = uploader
-        self.project_root = project_root
-
-    def run(self):
-        """执行Vue部署"""
-        try:
-            self.log.emit("开始部署Vue项目...")
-
-            def progress_callback(stage, current, total):
-                self.progress.emit(stage, current, total)
-                if total > 0 and current == total:
-                    self.log.emit(f"✓ {stage} 完成")
-                else:
-                    self.log.emit(f"{stage}...")
-
-            remote_path = self.uploader.deploy_vue_project(
-                self.project_root,
-                progress_callback=progress_callback
-            )
-
-            self.log.emit("✓ Vue项目部署完成")
-            self.finished.emit(True, remote_path)
-
-        except Exception as e:
-            error_msg = str(e)
-            self.log.emit(f"✗ 部署失败: {error_msg}")
-            self.error.emit(error_msg)
-
-
-class InstallThread(QThread):
-    """环境安装线程"""
-
-    log = Signal(str)
-    progress = Signal(str, int, int)
-    finished = Signal(bool, str)
-    error = Signal(str)
-
-    def __init__(self, uploader: ProjectUploader, install_type: str, root_password: str = 'root'):
-        super().__init__()
-        self.uploader = uploader
-        self.install_type = install_type
-        self.root_password = root_password
-
-    def run(self):
-        """执行环境安装"""
-        try:
-            def progress_callback(stage, current, total):
-                self.progress.emit(stage, current, total)
-                if total > 0 and current == total:
-                    self.log.emit(f"✓ {stage} 完成")
-                else:
-                    self.log.emit(f"{stage}...")
-
-            if self.install_type == 'mysql':
-                self.log.emit("开始安装MySQL...")
-                self.uploader.install_mysql(self.root_password, progress_callback)
-                self.log.emit("✓ MySQL安装完成")
-                self.finished.emit(True, "MySQL安装成功！\n\n请使用以下信息连接：\n用户名: root\n密码: " + self.root_password)
-
-            elif self.install_type == 'redis':
-                self.log.emit("开始安装Redis...")
-                self.uploader.install_redis(progress_callback)
-                self.log.emit("✓ Redis安装完成")
-                self.finished.emit(True, "Redis安装成功！\n\n服务已自动启动")
-
-            elif self.install_type == 'nginx':
-                self.log.emit("开始安装Nginx...")
-                self.uploader.install_nginx(progress_callback)
-                self.log.emit("✓ Nginx安装完成")
-                self.finished.emit(True, "Nginx安装成功！\n\n服务已自动启动\n默认监听端口: 80")
-
-            elif self.install_type == 'all':
-                self.log.emit("开始安装全部环境...")
-                self.log.emit("1/3 安装MySQL...")
-                self.uploader.install_mysql(self.root_password, progress_callback)
-                self.log.emit("✓ MySQL安装完成")
-
-                self.log.emit("2/3 安装Redis...")
-                self.uploader.install_redis(progress_callback)
-                self.log.emit("✓ Redis安装完成")
-
-                self.log.emit("3/3 安装Nginx...")
-                self.uploader.install_nginx(progress_callback)
-                self.log.emit("✓ Nginx安装完成")
-
-                self.finished.emit(True, "全部环境安装成功！\n\n已安装：\n- MySQL\n- Redis\n- Nginx\n\n所有服务已自动启动")
-
-        except Exception as e:
-            error_msg = str(e)
-            self.log.emit(f"✗ 安装失败: {error_msg}")
-            self.error.emit(error_msg)
-
-
-class MySQLInstallDialog(QDialog):
-    """MySQL安装配置对话框"""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("MySQL配置")
-        self.setMinimumWidth(400)
-        self.init_ui()
-
-    def init_ui(self):
-        """初始化UI"""
-        layout = QVBoxLayout()
-
-        # 说明标签
-        info_label = QLabel("请设置MySQL root用户密码：")
-        layout.addWidget(info_label)
-
-        # 密码输入
-        password_layout = QHBoxLayout()
-        password_label = QLabel("密码:")
-        password_label.setMinimumWidth(80)
-        self.password_input = QLineEdit()
-        self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.password_input.setText("root")
-        password_layout.addWidget(password_label)
-        password_layout.addWidget(self.password_input)
-        layout.addLayout(password_layout)
-
-        # 确认密码输入
-        confirm_layout = QHBoxLayout()
-        confirm_label = QLabel("确认密码:")
-        confirm_label.setMinimumWidth(80)
-        self.confirm_input = QLineEdit()
-        self.confirm_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.confirm_input.setText("root")
-        confirm_layout.addWidget(confirm_label)
-        confirm_layout.addWidget(self.confirm_input)
-        layout.addLayout(confirm_layout)
-
-        # 按钮
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self.accept_dialog)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-        self.setLayout(layout)
-
-    def accept_dialog(self):
-        """确认对话框"""
-        password = self.password_input.text()
-        confirm = self.confirm_input.text()
-
-        if not password:
-            QMessageBox.warning(self, "提示", "密码不能为空")
-            return
-
-        if password != confirm:
-            QMessageBox.warning(self, "提示", "两次输入的密码不一致")
-            return
-
-        self.accept()
-
-    def get_password(self) -> str:
-        """获取密码"""
-        return self.password_input.text()
-
-
-def main():
-    """主函数"""
-    app = QApplication(sys.argv)
-
-    # 设置应用程序信息
-    app.setApplicationName("DeployUpload")
-    app.setApplicationVersion("1.0.0")
-    app.setOrganizationName("DeployUpload")
-
-    # 设置Windows Vista风格
-    app.setStyle(QStyleFactory.create("windowsvista"))
-
-    # 创建并显示主窗口
-    window = DeployUploadWindow()
-    window.show()
-
-    sys.exit(app.exec())
-
-
-if __name__ == '__main__':
-    main()
