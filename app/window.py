@@ -520,21 +520,43 @@ class DeployUploadWindow(QMainWindow):
                 proxy_count = len(vue_config["proxy_configs"])
                 proxy_info = f"\n• 检测到 {proxy_count} 个API代理配置"
 
+            # 构建模式信息
+            build_mode = vue_config.get("build_mode", "remote")
+            build_mode_text = "本地构建" if build_mode == "local" else "远程构建"
+
+            # 根据构建模式显示不同的操作步骤
+            if build_mode == "local":
+                steps_info = (
+                    "该操作将：\n"
+                    "1. 在本地执行构建命令\n"
+                    "2. 上传构建产物（dist目录）\n"
+                    "3. 配置Nginx（包含代理规则）\n\n"
+                    "优点：服务器负载小，构建速度快\n"
+                    "缺点：需要本地安装Node.js环境"
+                )
+            else:
+                steps_info = (
+                    "该操作将：\n"
+                    "1. 上传项目源码文件\n"
+                    "2. 在远程安装Node.js依赖\n"
+                    "3. 在远程执行构建命令\n"
+                    "4. 配置Nginx（包含代理规则）\n\n"
+                    "优点：不依赖本地环境\n"
+                    "缺点：服务器负载较高，构建较慢"
+                )
+
             reply = QMessageBox.question(
                 self,
                 "确认部署",
                 f"确定要部署Vue项目到服务器 {host} 吗？\n\n"
                 f"项目目录: {project_root}\n"
                 f"远程目录: {vue_config['remote_dir']}\n"
+                f"构建模式: {build_mode_text}\n"
                 f"构建命令: {vue_config['build_command']}\n"
                 f"Nginx端口: {vue_config['nginx_port']}\n"
                 f"服务器名称: {vue_config['server_name']}"
                 f"{proxy_info}\n\n"
-                "该操作将：\n"
-                "1. 上传项目文件\n"
-                "2. 安装Node.js依赖\n"
-                "3. 执行构建命令\n"
-                "4. 配置Nginx（包含代理规则）",
+                f"{steps_info}",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
             )
 

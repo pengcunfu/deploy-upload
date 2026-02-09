@@ -438,6 +438,7 @@ class ProjectUploader:
         proxy_configs: Optional[List[dict]] = None,
         auto_install: bool = True,
         clean_build: bool = False,
+        build_mode: str = "remote",
         progress_callback: Optional[Callable[[str, int, int], None]] = None
     ) -> str:
         """
@@ -454,6 +455,7 @@ class ProjectUploader:
             proxy_configs (list, optional): API代理配置列表
             auto_install (bool): 自动安装Node.js，默认为 True
             clean_build (bool): 清理并重新构建，默认为 False
+            build_mode (str): 构建模式，"local" 或 "remote"，默认为 "remote"
             progress_callback (Callable, optional): 进度回调函数
 
         Returns:
@@ -466,62 +468,125 @@ class ProjectUploader:
             remote_dir = f"/home/{self.username}/vue-apps"
 
         try:
-            # 1. 上传项目
-            if progress_callback:
-                progress_callback("上传Vue项目", 0, 100)
-
-            remote_project_path = self.upload_and_extract(
-                str(project_root),
-                remote_dir,
-                progress_callback=progress_callback
-            )
-
             project_name = project_root.name
 
-            # 2. 检查并安装Node.js（如果需要）
-            if auto_install:
+            # 本地构建模式
+            if build_mode == "local":
                 if progress_callback:
-                    progress_callback("检查Node.js环境", 0, 100)
+                    progress_callback("本地构建模式", 0, 100)
 
-                check_node_cmd = "command -v node"
-                exit_status, output, error = self.execute_remote_command(check_node_cmd)
+                # 1. 在本地构建项目
+                if progress_callback:
+                    progress_callback("本地构建Vue项目", 0, 100)
 
-                if exit_status != 0:
+                import subprocess
+                import shutil
+
+                # 检查本地是否有Node.js
+                if not shutil.which("node"):
+                    raise Exception("本地未安装Node.js，请先安装Node.js或使用远程构建模式")
+
+                # 清理旧的构建（如果需要）
+                dist_dir = project_root / "dist"
+                if clean_build and dist_dir.exists():
                     if progress_callback:
-                        progress_callback("安装Node.js", 0, 100)
+                        progress_callback("清理旧构建", 0, 100)
+                    shutil.rmtree(dist_dir)
 
-                    # 安装Node.js
-                    install_node_cmd = "curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash - && sudo DEBIAN_FRONTEND=noninteractive apt install -y nodejs"
-                    exit_status, output, error = self.execute_remote_command(install_node_cmd)
+                # 执行本地构建
+                build_process = subprocess.Popen(
+                    build_command,
+                    shell=True,
+                    cwd=str(project_root),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+
+                _, stderr = build_process.communicate()
+
+                if build_process.returncode != 0:
+                    error_msg = stderr.decode('utf-8', errors='ignore')
+                    raise Exception(f"本地构建失败: {error_msg}")
+
+                if progress_callback:
+                    progress_callback("本地构建完成", 100, 100)
+
+                # 2. 上传dist目录
+                if progress_callback:
+                    progress_callback("上传构建文件", 0, 100)
+
+                # 创建临时目录用于打包
+                import tempfile
+                temp_dir = tempfile.mkdtemp()
+                temp_dist = Path(temp_dir) / "dist"
+                shutil.copytree(dist_dir, temp_dist)
+
+                # 打包并上传
+                remote_project_path = self._upload_and_extract_dist(
+                    str(temp_dir),
+                    remote_dir,
+                    progress_callback=progress_callback
+                )
+
+                # 清理临时目录
+                shutil.rmtree(temp_dir)
+
+            else:
+                # 远程构建模式（原有逻辑）
+                # 1. 上传项目
+                if progress_callback:
+                    progress_callback("上传Vue项目", 0, 100)
+
+                remote_project_path = self.upload_and_extract(
+                    str(project_root),
+                    remote_dir,
+                    progress_callback=progress_callback
+                )
+
+                # 2. 检查并安装Node.js（如果需要）
+                if auto_install:
+                    if progress_callback:
+                        progress_callback("检查Node.js环境", 0, 100)
+
+                    check_node_cmd = "command -v node"
+                    exit_status, output, error = self.execute_remote_command(check_node_cmd)
 
                     if exit_status != 0:
-                        raise Exception(f"Node.js安装失败: {error}")
+                        if progress_callback:
+                            progress_callback("安装Node.js", 0, 100)
 
-            # 3. 安装依赖并构建
-            if progress_callback:
-                progress_callback("安装Node.js依赖", 0, 100)
+                        # 安装Node.js
+                        install_node_cmd = "curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash - && sudo DEBIAN_FRONTEND=noninteractive apt install -y nodejs"
+                        exit_status, output, error = self.execute_remote_command(install_node_cmd)
 
-            if clean_build:
-                # 清理node_modules并重新安装
-                install_cmd = f"cd {remote_project_path} && rm -rf node_modules package-lock.json && npm install"
-            else:
-                install_cmd = f"cd {remote_project_path} && npm install"
+                        if exit_status != 0:
+                            raise Exception(f"Node.js安装失败: {error}")
 
-            exit_status, output, error = self.execute_remote_command(install_cmd)
+                # 3. 安装依赖并构建
+                if progress_callback:
+                    progress_callback("安装Node.js依赖", 0, 100)
 
-            if exit_status != 0:
-                raise Exception(f"安装依赖失败: {error}")
+                if clean_build:
+                    # 清理node_modules并重新安装
+                    install_cmd = f"cd {remote_project_path} && rm -rf node_modules package-lock.json && npm install"
+                else:
+                    install_cmd = f"cd {remote_project_path} && npm install"
 
-            if progress_callback:
-                progress_callback("构建Vue项目", 0, 100)
+                exit_status, output, error = self.execute_remote_command(install_cmd)
 
-            build_cmd = f"cd {remote_project_path} && {build_command}"
-            exit_status, output, error = self.execute_remote_command(build_cmd)
+                if exit_status != 0:
+                    raise Exception(f"安装依赖失败: {error}")
 
-            if exit_status != 0:
-                raise Exception(f"构建失败: {error}")
+                if progress_callback:
+                    progress_callback("构建Vue项目", 0, 100)
 
-            # 4. 配置Nginx
+                build_cmd = f"cd {remote_project_path} && {build_command}"
+                exit_status, output, error = self.execute_remote_command(build_cmd)
+
+                if exit_status != 0:
+                    raise Exception(f"构建失败: {error}")
+
+            # 4. 配置Nginx（两种构建模式都需要）
             if progress_callback:
                 progress_callback("配置Nginx", 0, 100)
 
@@ -600,6 +665,94 @@ class ProjectUploader:
 
         except Exception as e:
             raise Exception(f"Vue项目部署失败: {str(e)}")
+
+    def _upload_and_extract_dist(
+        self,
+        local_dir: str,
+        remote_dir: str,
+        progress_callback: Optional[Callable[[str, int, int], None]] = None
+    ) -> str:
+        """
+        上传并解压本地构建的dist目录
+
+        Args:
+            local_dir (str): 本地目录（包含dist文件夹）
+            remote_dir (str): 远程目录
+            progress_callback (Callable, optional): 进度回调函数
+
+        Returns:
+            str: 远程项目路径
+        """
+        local_dir = Path(local_dir).resolve()
+        project_name = local_dir.parent.name
+
+        try:
+            # 1. 创建临时tar文件
+            temp_tar = tempfile.NamedTemporaryFile(suffix='.tar.gz', delete=False)
+
+            if progress_callback:
+                progress_callback("打包构建文件", 0, 100)
+
+            with tarfile.open(temp_tar.name, "w:gz") as tar:
+                for item in local_dir.iterdir():
+                    tar.add(item, arcname=item.name)
+
+            if progress_callback:
+                progress_callback("打包构建文件", 50, 100)
+
+            # 2. 连接SSH
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            ssh.connect(
+                self.host,
+                port=self.port,
+                username=self.username,
+                password=self.password,
+                timeout=10
+            )
+
+            sftp = ssh.open_sftp()
+
+            # 3. 创建远程目录
+            remote_project_path = f"{remote_dir}/{project_name}"
+            self._create_remote_dirs(sftp, remote_project_path)
+
+            if progress_callback:
+                progress_callback("上传构建文件", 50, 100)
+
+            # 4. 上传tar文件
+            remote_tar_path = f"/tmp/{project_name}_dist.tar.gz"
+            sftp.put(temp_tar.name, remote_tar_path)
+
+            sftp.close()
+            ssh.close()
+
+            # 5. 解压文件
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            ssh.connect(
+                self.host,
+                port=self.port,
+                username=self.username,
+                password=self.password,
+                timeout=10
+            )
+
+            extract_cmd = f"tar -xzf {remote_tar_path} -C {remote_project_path} && rm {remote_tar_path}"
+            ssh.exec_command(extract_cmd)
+
+            ssh.close()
+
+            if progress_callback:
+                progress_callback("上传构建文件", 100, 100)
+
+            # 删除临时文件
+            Path(temp_tar.name).unlink()
+
+            return remote_project_path
+
+        except Exception as e:
+            raise Exception(f"上传dist文件失败: {str(e)}")
 
     def install_mysql(self, root_password: str = 'root',
                      progress_callback: Optional[Callable[[str, int, int], None]] = None) -> bool:

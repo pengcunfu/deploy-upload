@@ -104,6 +104,7 @@ class VueDeployThread(QThread):
                 proxy_configs=self.config.get("proxy_configs", []),
                 auto_install=self.config.get("auto_install", True),
                 clean_build=self.config.get("clean_build", False),
+                build_mode=self.config.get("build_mode", "remote"),
                 progress_callback=progress_callback
             )
 

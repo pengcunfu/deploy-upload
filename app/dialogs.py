@@ -575,6 +575,42 @@ class VueDeployDialog(QDialog):
         options_layout = QVBoxLayout()
         options_layout.setSpacing(8)
 
+        # 构建方式选择
+        build_mode_label = QLabel("构建方式:")
+        build_mode_label.setStyleSheet("font-weight: bold;")
+        options_layout.addWidget(build_mode_label)
+
+        from PySide6.QtWidgets import QRadioButton, QButtonGroup
+        build_mode_layout = QHBoxLayout()
+
+        self.local_build_radio = QRadioButton("本地构建")
+        self.local_build_radio.setChecked(True)
+        self.local_build_radio.setToolTip("在本地构建完成后上传dist目录到服务器")
+
+        self.remote_build_radio = QRadioButton("远程构建")
+        self.remote_build_radio.setToolTip("上传源代码到服务器后在远程构建")
+
+        # 将按钮添加到按钮组以确保互斥
+        build_mode_group = QButtonGroup(self)
+        build_mode_group.addButton(self.local_build_radio)
+        build_mode_group.addButton(self.remote_build_radio)
+
+        build_mode_layout.addWidget(self.local_build_radio)
+        build_mode_layout.addWidget(self.remote_build_radio)
+        build_mode_layout.addStretch()
+        options_layout.addLayout(build_mode_layout)
+
+        # 构建方式说明
+        build_mode_desc = QLabel(
+            "• 本地构建: 在本机执行构建，上传dist目录（推荐，服务器负载小）\n"
+            "• 远程构建: 上传源码，在服务器执行构建（需服务器安装Node.js）"
+        )
+        build_mode_desc.setStyleSheet("color: #666; font-size: 11px; padding: 5px 0;")
+        build_mode_desc.setWordWrap(True)
+        options_layout.addWidget(build_mode_desc)
+
+        options_layout.addSpacing(10)
+
         self.auto_install_checkbox = QPushButton("自动安装Node.js和npm (如果未安装)")
         self.auto_install_checkbox.setCheckable(True)
         self.auto_install_checkbox.setChecked(True)
@@ -802,5 +838,6 @@ class VueDeployDialog(QDialog):
             "enable_ssl": self.ssl_checkbox.isChecked(),
             "proxy_configs": proxy_configs,
             "auto_install": self.auto_install_checkbox.isChecked(),
-            "clean_build": self.clean_build_checkbox.isChecked()
+            "clean_build": self.clean_build_checkbox.isChecked(),
+            "build_mode": "local" if self.local_build_radio.isChecked() else "remote"
         }
