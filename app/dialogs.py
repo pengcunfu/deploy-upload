@@ -600,15 +600,27 @@ class VueDeployDialog(QDialog):
         self.setLayout(layout)
 
     def load_vite_config(self):
-        """读取vite.config.js配置"""
-        import json
+        """读取vite.config.js或vue.config.js配置"""
         import re
+        from pathlib import Path
+
+        # 支持的配置文件列表（按优先级排序）
+        config_files = [
+            "vite.config.js",
+            "vite.config.ts",
+            "vue.config.js",
+            "vue.config.ts"
+        ]
 
         vite_config_path = None
-        for config_name in ["vite.config.js", "vite.config.ts"]:
+        is_vue_cli = False  # 标记是否为VueCLI配置
+
+        for config_name in config_files:
             test_path = Path(self.project_root) / config_name
             if test_path.exists():
                 vite_config_path = test_path
+                if config_name.startswith("vue.config"):
+                    is_vue_cli = True
                 break
 
         if not vite_config_path or not vite_config_path.exists():
@@ -617,15 +629,79 @@ class VueDeployDialog(QDialog):
         try:
             content = vite_config_path.read_text(encoding='utf-8')
 
-            # 解析server.proxy配置
-            proxy_pattern = r"proxy\s*:\s*\{([^}]+)\}"
-            proxy_match = re.search(proxy_pattern, content, re.DOTALL)
+            if is_vue_cli:
+                # VueCLI配置 - 解析devServer.proxy
+                self._load_vue_cli_proxy(content)
+            else:
+                # Vite配置 - 解析server.proxy
+                self._load_vite_proxy(content)
+
+        except Exception as e:
+            print(f"读取配置文件失败: {e}")
+
+    def _load_vite_proxy(self, content: str):
+        """读取Vite的proxy配置"""
+        import re
+
+        # 解析server.proxy配置
+        # 支持多种格式：
+        # 1. proxy: { '/api': { target: '...' } }
+        # 2. proxy: { '^/api': { target: '...' } }
+        # 3. 使用with子选项的情况
+
+        # 首先尝试提取整个proxy对象
+        proxy_pattern = r"proxy\s*:\s*\{([^}]+(?:\{(?:[^{}]|\{[^{}]*\})*\})*[^}]*)\}"
+        proxy_match = re.search(proxy_pattern, content, re.DOTALL)
+
+        if proxy_match:
+            proxy_block = proxy_match.group(1)
+
+            # 查找所有代理规则
+            # 匹配 '/path': { ... } 或 '^/path': { ... }
+            rule_pattern = r"['\"](\^?/[^\"]+)['\"]\s*:\s*\{([^}]+(?:\{[^{}]*\})*[^}]*)\}"
+            rules = re.findall(rule_pattern, proxy_block, re.DOTALL)
+
+            for path, rule_config in rules:
+                # 提取target
+                target_match = re.search(r"target\s*:\s*['\"]([^'\"]+)['\"]", rule_config)
+                if target_match:
+                    target = target_match.group(1)
+                    # 清理路径中的^前缀（Nginx不使用这个）
+                    clean_path = path.lstrip('^') if path.startswith('^') else path
+                    self.add_proxy_row(clean_path, target, "从vite.config.js读取")
+
+    def _load_vue_cli_proxy(self, content: str):
+        """读取VueCLI的devServer.proxy配置"""
+        import re
+
+        # VueCLI配置格式：
+        # module.exports = {
+        #   devServer: {
+        #     proxy: {
+        #       '/api': {
+        #         target: 'http://localhost:8080',
+        #         ...
+        #       }
+        #     }
+        #   }
+        # }
+
+        # 先提取devServer对象
+        devserver_pattern = r"devServer\s*:\s*\{([^}]+(?:\{(?:[^{}]|\{[^{}]*\})*\})*[^}]*)\}"
+        devserver_match = re.search(devserver_pattern, content, re.DOTALL)
+
+        if devserver_match:
+            devserver_block = devserver_match.group(1)
+
+            # 在devServer中查找proxy
+            proxy_pattern = r"proxy\s*:\s*\{([^}]+(?:\{(?:[^{}]|\{[^{}]*\})*\})*[^}]*)\}"
+            proxy_match = re.search(proxy_pattern, devserver_block, re.DOTALL)
 
             if proxy_match:
                 proxy_block = proxy_match.group(1)
 
                 # 查找所有代理规则
-                rule_pattern = r"['\"]([^'\"]+)['\"]\s*:\s*\{([^}]+)\}"
+                rule_pattern = r"['\"](\^?/[^\"]+)['\"]\s*:\s*\{([^}]+(?:\{[^{}]*\})*[^}]*)\}"
                 rules = re.findall(rule_pattern, proxy_block, re.DOTALL)
 
                 for path, rule_config in rules:
@@ -633,10 +709,9 @@ class VueDeployDialog(QDialog):
                     target_match = re.search(r"target\s*:\s*['\"]([^'\"]+)['\"]", rule_config)
                     if target_match:
                         target = target_match.group(1)
-                        self.add_proxy_row(path, target, "从vite.config.js读取")
-
-        except Exception as e:
-            print(f"读取vite配置失败: {e}")
+                        # 清理路径中的^前缀
+                        clean_path = path.lstrip('^') if path.startswith('^') else path
+                        self.add_proxy_row(clean_path, target, "从vue.config.js读取")
 
     def browse_project(self):
         """浏览项目目录"""
