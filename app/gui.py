@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import QThread, Signal, Slot
 from PySide6.QtGui import QFont
-from uploader import ProjectUploader
+from .uploader import ProjectUploader
 
 
 class UploadThread(QThread):

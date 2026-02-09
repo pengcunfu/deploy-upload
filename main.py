@@ -7,7 +7,7 @@ DeployUpload GUI 启动程序
 """
 
 import sys
-from gui import main
+from app.gui import main
 
 if __name__ == '__main__':
     main()

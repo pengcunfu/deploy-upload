@@ -1,0 +1,11 @@
+{
+    "files.exclude": {
+        "**/__pycache__": true, // 隐藏所有目录下的__pycache__文件夹
+        "**/*.pyc": true, // 隐藏所有.pyc编译文件
+        "**/*.pyo": true, // 隐藏所有.pyo编译文件
+        "**/.pytest_cache": true, // 隐藏所有.pytest_cache缓存目录
+        "**/.mypy_cache": true, // 隐藏所有.mypy_cache缓存目录
+        "**/*.egg-info": true, // 隐藏所有.egg-info目录（Python包相关）
+        "**/.ipynb_checkpoints": true // 隐藏所有ipynb检查点目录
+    }
+}
